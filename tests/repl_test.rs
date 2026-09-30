@@ -51,6 +51,11 @@ async fn mount_repo(
     skills: &[(&str, &str)],
 ) {
     Mock::given(method("GET"))
+        .and(path(format!("/repos/{}/{}", owner, repo)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
         .and(path(format!("/repos/{}/{}/commits/HEAD", owner, repo)))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": sha })))
         .mount(server)

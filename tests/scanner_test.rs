@@ -190,6 +190,130 @@ async fn test_scan_github_repo_forbidden_rate_limit_403() {
     }
 }
 
+async fn mount_head_repo(server: &MockServer, default_branch: Option<&str>) {
+    if let Some(default_branch) = default_branch {
+        Mock::given(method("GET"))
+            .and(path("/repos/jetbrains/kotlin"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "default_branch": default_branch })),
+            )
+            .mount(server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/repos/jetbrains/kotlin/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "sha_k" })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/jetbrains/kotlin/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "tree_k",
+            "tree": [{ "path": ".claude/skills/cherry-pick/SKILL.md", "type": "blob", "sha": "b1" }]
+        })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/jetbrains/kotlin/sha_k/.claude/skills/cherry-pick/SKILL.md",
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("---\nname: cherry-pick\ndescription: Cherry pick.\n---\n"),
+        )
+        .mount(server)
+        .await;
+}
+
+fn head_options(
+    server: &MockServer,
+    no_cache: bool,
+    db_path: Option<std::path::PathBuf>,
+) -> ScannerOptions {
+    ScannerOptions {
+        token: None,
+        branch: None,
+        base_api_url: Some(server.uri()),
+        base_raw_url: Some(server.uri()),
+        no_cache,
+        db_path,
+    }
+}
+
+const MASTER_URL: &str =
+    "https://github.com/jetbrains/kotlin/blob/master/.claude/skills/cherry-pick/SKILL.md";
+
+#[tokio::test]
+async fn test_scan_head_uses_repository_default_branch_in_urls() {
+    let server = MockServer::start().await;
+    mount_head_repo(&server, Some("master")).await;
+
+    let result = scan_github_repo(
+        "https://github.com/jetbrains/kotlin",
+        &head_options(&server, true, None),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.skills.len(), 1);
+    assert_eq!(result.skills[0].url, MASTER_URL);
+}
+
+#[tokio::test]
+async fn test_scan_head_falls_back_to_head_ref_when_default_branch_unknown() {
+    let server = MockServer::start().await;
+    mount_head_repo(&server, None).await;
+
+    let result = scan_github_repo("jetbrains/kotlin", &head_options(&server, true, None))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.skills[0].url,
+        "https://github.com/jetbrains/kotlin/blob/HEAD/.claude/skills/cherry-pick/SKILL.md"
+    );
+}
+
+#[tokio::test]
+async fn test_scan_cached_results_with_stale_main_urls_are_corrected() {
+    let server = MockServer::start().await;
+    mount_head_repo(&server, Some("master")).await;
+    let db_path = env::temp_dir().join(format!("test_cache_stale_{}.db", uuid_or_timestamp()));
+
+    // Simulate a cache entry written by an older version that assumed `main`.
+    let mut conn = skill_atlas::open_db(Some(&db_path)).unwrap();
+    let stale = Skill {
+        name: "cherry-pick".to_string(),
+        description: "Cherry pick.".to_string(),
+        path: ".claude/skills/cherry-pick/SKILL.md".to_string(),
+        url: "https://github.com/jetbrains/kotlin/blob/main/.claude/skills/cherry-pick/SKILL.md"
+            .to_string(),
+    };
+    skill_atlas::save_cached_repository(
+        &mut conn,
+        "jetbrains",
+        "kotlin",
+        "HEAD",
+        Some("sha_k"),
+        None,
+        &[stale],
+    )
+    .unwrap();
+    drop(conn);
+
+    let result = scan_github_repo(
+        "jetbrains/kotlin",
+        &head_options(&server, false, Some(db_path.clone())),
+    )
+    .await
+    .unwrap();
+
+    assert!(result.from_cache);
+    assert_eq!(result.skills[0].url, MASTER_URL);
+    let _ = std::fs::remove_file(db_path);
+}
+
 fn uuid_or_timestamp() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

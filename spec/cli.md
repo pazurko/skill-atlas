@@ -61,6 +61,7 @@ JetBrains/kotlin 6 skills
    - If the repository has updated or is scanned for the first time, analyzes the repository tree for skill definitions (`SKILL.md`, `skill.json`, `skill.yaml`, `.agents/skills`, `.claude/skills`, `.junie/skills`, `skills/`).
    - Extracts and cleans metadata (skill name, first sentence of description, file path, GitHub URL) across YAML frontmatter, JSON, YAML files, and Markdown headings.
    - Saves the fresh scan results and commit SHA into the local SQLite database.
+   - **GitHub URLs** have the form `https://github.com/<owner>/<repo>/blob/<ref>/<path>`. With an explicit `--branch`, `<ref>` is that branch. With the default `HEAD`, `<ref>` is the repository's default branch as reported by the GitHub API (e.g. `master` for `JetBrains/kotlin`, never an assumed `main`); if it cannot be determined, `HEAD` is used (GitHub resolves it to the default branch). URLs of cached results are rebuilt the same way when loaded, so stale links from older caches are corrected.
 
 3. **Interactive Selection List**:
    - Outputs the discovered skills in a clean, terminal-rendered interactive menu displaying skill names, paths, and descriptions.

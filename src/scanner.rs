@@ -79,6 +79,45 @@ struct CommitResponse {
     sha: String,
 }
 
+#[derive(Deserialize)]
+struct RepoResponse {
+    default_branch: String,
+}
+
+/// Builds the GitHub web URL of a file on the given branch or ref.
+fn github_blob_url(owner: &str, repo: &str, web_ref: &str, path: &str) -> String {
+    format!(
+        "https://github.com/{}/{}/blob/{}/{}",
+        owner, repo, web_ref, path
+    )
+}
+
+/// Resolves the ref used in GitHub web links. An explicit branch is used as-is; for `HEAD`
+/// the repository's default branch is looked up (e.g. `master`), falling back to `HEAD`,
+/// which GitHub also resolves to the default branch.
+async fn resolve_web_ref(
+    client: &reqwest::Client,
+    base_api: &str,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+) -> String {
+    if branch != "HEAD" {
+        return branch.to_string();
+    }
+    let repo_url = format!("{}/repos/{}/{}", base_api, owner, repo);
+    if let Ok(res) = client.get(&repo_url).send().await {
+        if res.status().is_success() {
+            if let Ok(data) = res.json::<RepoResponse>().await {
+                if !data.default_branch.trim().is_empty() {
+                    return data.default_branch;
+                }
+            }
+        }
+    }
+    "HEAD".to_string()
+}
+
 /// Determines if a file path qualifies as an agent skill definition.
 pub fn is_skill_path(path: &str) -> bool {
     let normalized = path.to_lowercase();
@@ -187,11 +226,20 @@ pub async fn scan_github_repo(
         };
 
         if is_unchanged {
+            // Rebuild links so results cached by older versions (which assumed `main`) are corrected.
+            let web_ref = resolve_web_ref(&client, base_api, &owner, &repo, branch).await;
+            let skills = cached_skills
+                .into_iter()
+                .map(|mut skill| {
+                    skill.url = github_blob_url(&owner, &repo, &web_ref, &skill.path);
+                    skill
+                })
+                .collect();
             return Ok(ScanResult {
                 owner,
                 repo,
                 branch: branch.to_string(),
-                skills: cached_skills,
+                skills,
                 from_cache: true,
                 commit_sha: cached_repo.commit_sha,
             });
@@ -246,6 +294,8 @@ pub async fn scan_github_repo(
         .as_deref()
         .unwrap_or("https://raw.githubusercontent.com");
 
+    let web_ref = resolve_web_ref(&client, base_api, &owner, &repo, branch).await;
+
     let mut skills = Vec::new();
 
     for entry in skill_entries {
@@ -271,44 +321,19 @@ pub async fn scan_github_repo(
 
         // 2. Fallback to raw content URL if blob API was not used or failed
         if content.is_empty() {
-            let raw_branch = match &current_sha {
-                Some(sha) => sha.as_str(),
-                None => {
-                    if branch == "HEAD" {
-                        "main"
-                    } else {
-                        branch
-                    }
-                }
-            };
+            let raw_ref = current_sha.as_deref().unwrap_or(&web_ref);
 
-            let raw_url = format!(
-                "{}/{}/{}/{}/{}",
-                base_raw, owner, repo, raw_branch, entry.path
-            );
+            let raw_url = format!("{}/{}/{}/{}/{}", base_raw, owner, repo, raw_ref, entry.path);
 
             if let Ok(raw_res) = client.get(&raw_url).send().await {
                 if raw_res.status().is_success() {
                     content = raw_res.text().await.unwrap_or_default();
-                } else if branch == "HEAD" && current_sha.is_none() {
-                    // Try "master" as well if "main" 404s
-                    let master_url =
-                        format!("{}/{}/{}/master/{}", base_raw, owner, repo, entry.path);
-                    if let Ok(m_res) = client.get(&master_url).send().await {
-                        if m_res.status().is_success() {
-                            content = m_res.text().await.unwrap_or_default();
-                        }
-                    }
                 }
             }
         }
 
         let metadata = parse_skill_metadata(&content, &entry.path);
-        let web_branch = if branch == "HEAD" { "main" } else { branch };
-        let web_url = format!(
-            "https://github.com/{}/{}/blob/{}/{}",
-            owner, repo, web_branch, entry.path
-        );
+        let web_url = github_blob_url(&owner, &repo, &web_ref, &entry.path);
 
         skills.push(Skill {
             name: metadata.name,
