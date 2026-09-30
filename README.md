@@ -12,8 +12,9 @@ Skill Atlas is a high-performance interactive CLI built in Rust designed to scan
 - **Automatic Metadata Extraction**: Parses skill names and first-sentence descriptions from YAML frontmatter, Markdown headings, or JSON/YAML configurations.
 - **Interactive Terminal Menu**:
   - `↑` / `↓` (or `k` / `j`): Move selection cursor between discovered skills.
-  - `Enter`: Open the selected skill's GitHub page directly in the default browser.
-  - `q` / `Esc` / `Ctrl+C`: Exit the CLI.
+  - `Enter`: Open the selected skill's GitHub page in the default browser — the menu stays open so you can open more skills.
+  - `q` / `Esc` / `Ctrl+C`: Leave the menu and return to the `skill-atlas>` prompt.
+- **Persistent Interactive Session**: The CLI does not stop after one scan. From the `skill-atlas>` prompt you can scan other repositories, re-scan, list and open skills again, until you type `exit`.
 - **Flexible Repository Inputs**: Accepts `owner/repo`, full HTTPS URLs (`https://github.com/owner/repo`), and SSH URLs (`git@github.com:...`).
 - **Non-Interactive & JSON Support**: Provides clean terminal output in non-TTY environments and a `--json` flag for scripting and CI pipelines.
 
@@ -50,9 +51,33 @@ cargo install --path .
 # Scan target repository directly
 skill-atlas scan <githubrepo>
 
-# Or launch interactively
+# Or launch the interactive session
 skill-atlas
 ```
+
+In a terminal, both forms end in a persistent `skill-atlas>` prompt (with `--json` or non-TTY output, `scan` stays one-shot):
+
+```text
+⚡ Welcome to Skill Atlas!
+Type 'scan <githubrepo>' (e.g. scan https://github.com/JetBrains/kotlin), 'help' for commands, or 'exit' to quit.
+
+skill-atlas> scan JetBrains/kotlin          # opens the arrow-key menu; q returns here
+skill-atlas> open 3                         # open skill #3 of the last scan (or: open gradle)
+skill-atlas> list                           # show the last results again
+skill-atlas> https://github.com/owner/repo  # a bare repo also scans
+skill-atlas> rescan                         # re-scan the last repo, bypassing the cache
+skill-atlas> exit
+```
+
+| Command | Action |
+| --- | --- |
+| `scan <githubrepo> [-b <BRANCH>] [--refresh]` | Scan a repository (a bare `owner/repo` or URL works too) |
+| `rescan` / `refresh` | Re-scan the last repository, bypassing the cache |
+| `list` / `ls` | Show the skills of the last scan again |
+| `open <number\|name>` | Open a skill from the last scan in the browser |
+| `help` / `?` | Show available commands |
+| `clear` | Clear the screen |
+| `exit` / `quit` / `q` / `Ctrl+D` | Exit Skill Atlas |
 
 #### Examples
 
@@ -103,7 +128,7 @@ JetBrains/kotlin 6 skills
  [ 6] › minimize-repro-for-diagnostic-test                                         SKILL.md ↗
       Makes a minimal reproduction of a Frontend-related bug as a diagnostic test...
 
-↑/↓ navigate • Enter open in GitHub • q quit
+↑/↓ navigate • Enter open in GitHub • q back to prompt
 ```
 
 ---
@@ -114,8 +139,8 @@ JetBrains/kotlin 6 skills
 | --- | --- |
 | `↑` / `Up Arrow` or `k` | Navigate to previous skill |
 | `↓` / `Down Arrow` or `j` | Navigate to next skill |
-| `Enter` | Open the selected skill in your default web browser |
-| `q` / `Esc` or `Ctrl+C` | Exit the CLI |
+| `Enter` | Open the selected skill in your default web browser (menu stays open) |
+| `q` / `Esc` or `Ctrl+C` | Return to the `skill-atlas>` prompt |
 
 ---
 

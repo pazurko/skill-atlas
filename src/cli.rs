@@ -1,4 +1,5 @@
 use crate::interactive::present_skills;
+use crate::repl::{cache_message, run_repl, write_welcome, ReplSession, TerminalUi};
 use crate::scanner::{scan_github_repo, ScannerOptions};
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -60,80 +61,85 @@ pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             no_cache,
             db_path,
         }) if !repo.trim().is_empty() => {
-            scan_and_present(&repo, token, branch, json, no_cache, db_path).await
+            if !json && is_tty() {
+                let options = scanner_options(token, branch, no_cache, db_path);
+                run_session(Some(repo.trim()), options).await
+            } else {
+                scan_and_present(&repo, token, branch, json, no_cache, db_path).await
+            }
         }
         Some(Commands::Scan {
             githubrepo: _,
             token,
             branch,
-            json,
+            json: _,
             no_cache,
             db_path,
         }) => {
-            let is_tty = io::stdout().is_terminal() && io::stdin().is_terminal();
-            if is_tty {
-                println!("{}", "\n⚡ Welcome to Skill Atlas!\n".bold().cyan());
-                print!(
-                    "{}",
-                    "Enter GitHub repository to scan (e.g. https://github.com/JetBrains/kotlin): "
-                        .bold()
-                );
-                io::stdout().flush()?;
-
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
-                let mut repo = input.trim();
-                if repo.starts_with("scan ") {
-                    repo = repo[5..].trim();
-                }
-
-                if repo.is_empty() {
-                    println!("{}", "No repository entered. Exiting.\n".yellow());
-                    return Ok(());
-                }
-
-                scan_and_present(repo, token, branch, json, no_cache, db_path).await
+            if is_tty() {
+                run_session(None, scanner_options(token, branch, no_cache, db_path)).await
             } else {
-                eprintln!(
-                    "{}",
-                    "Usage: skill-atlas scan <githubrepo>\nRun `skill-atlas --help` for more information.".yellow()
-                );
+                print_usage();
                 Ok(())
             }
         }
         None => {
-            let is_tty = io::stdout().is_terminal() && io::stdin().is_terminal();
-            if is_tty {
-                println!("{}", "\n⚡ Welcome to Skill Atlas!\n".bold().cyan());
-                print!(
-                    "{}",
-                    "Enter command or GitHub repository to scan (e.g. scan https://github.com/JetBrains/kotlin): "
-                        .bold()
-                );
-                io::stdout().flush()?;
-
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
-                let mut repo = input.trim();
-                if repo.starts_with("scan ") {
-                    repo = repo[5..].trim();
-                }
-
-                if repo.is_empty() {
-                    println!("{}", "No repository entered. Exiting.\n".yellow());
-                    return Ok(());
-                }
-
-                scan_and_present(repo, None, None, false, false, None).await
+            if is_tty() {
+                run_session(None, ScannerOptions::default()).await
             } else {
-                eprintln!(
-                    "{}",
-                    "Usage: skill-atlas scan <githubrepo>\nRun `skill-atlas --help` for more information.".yellow()
-                );
+                print_usage();
                 Ok(())
             }
         }
     }
+}
+
+fn is_tty() -> bool {
+    io::stdout().is_terminal() && io::stdin().is_terminal()
+}
+
+fn print_usage() {
+    eprintln!(
+        "{}",
+        "Usage: skill-atlas scan <githubrepo>\nRun `skill-atlas --help` for more information."
+            .yellow()
+    );
+}
+
+fn scanner_options(
+    token: Option<String>,
+    branch: Option<String>,
+    no_cache: bool,
+    db_path: Option<PathBuf>,
+) -> ScannerOptions {
+    ScannerOptions {
+        token,
+        branch,
+        base_api_url: None,
+        base_raw_url: None,
+        no_cache,
+        db_path,
+    }
+}
+
+/// Runs the persistent `skill-atlas>` prompt session, optionally scanning a repository first.
+async fn run_session(
+    initial_repo: Option<&str>,
+    options: ScannerOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut out = io::stdout();
+    let mut ui = TerminalUi;
+    let mut session = ReplSession::new(options);
+
+    write_welcome(&mut out)?;
+    if let Some(repo) = initial_repo {
+        session.scan(&mut out, &mut ui, repo, None, false).await?;
+    }
+    out.flush()?;
+
+    let mut input = io::stdin().lock();
+    run_repl(&mut input, &mut out, &mut ui, &mut session).await?;
+    Ok(())
 }
 
 async fn scan_and_present(
@@ -172,23 +178,8 @@ async fn scan_and_present(
                 return Ok(());
             }
 
-            if result.from_cache {
-                let commit_info = result
-                    .commit_sha
-                    .as_deref()
-                    .map(|sha| {
-                        let short_sha = if sha.len() >= 7 { &sha[..7] } else { sha };
-                        format!(" (commit {})", short_sha)
-                    })
-                    .unwrap_or_default();
-                println!(
-                    "{}",
-                    format!(
-                        "📦 Repository unchanged since last scan{}. Loaded results from local SQLite database.\n",
-                        commit_info
-                    )
-                    .green()
-                );
+            if let Some(msg) = cache_message(&result) {
+                println!("{}", msg.green());
             }
 
             if result.skills.is_empty() {

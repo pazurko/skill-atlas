@@ -9,12 +9,12 @@ Skill Atlas is an interactive CLI designed to maximize developer efficiency and 
 # Direct scanning via subcommand
 skill-atlas scan <githubrepo> [OPTIONS]
 
-# Interactive mode (prompts for repository when launched directly or without arguments)
+# Interactive session (persistent `skill-atlas>` prompt when launched without arguments)
 skill-atlas
 ```
 
 ### Arguments & Options
-- `<githubrepo>`: Target repository identifier or URL (e.g., `owner/repo`, `https://github.com/owner/repo`, or `git@github.com:...`). If omitted in an interactive terminal, the user is prompted to enter a repository.
+- `<githubrepo>`: Target repository identifier or URL (e.g., `owner/repo`, `https://github.com/owner/repo`, or `git@github.com:...`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed to stderr.
 - `-t, --token <TOKEN>`: GitHub personal access token to prevent API rate limiting.
 - `-b, --branch <BRANCH>`: Target Git branch or ref (default: `HEAD`).
 - `--json`: Output raw JSON scan results instead of interactive menu.
@@ -47,7 +47,7 @@ JetBrains/kotlin 6 skills
  [ 6] › minimize-repro-for-diagnostic-test                                         SKILL.md ↗
       Makes a minimal reproduction of a Frontend-related bug as a diagnostic test...
 
-↑/↓ navigate • Enter open in GitHub • q quit
+↑/↓ navigate • Enter open in GitHub • q back to prompt
 ```
 
 ## Workflow & Behavior
@@ -67,5 +67,30 @@ JetBrains/kotlin 6 skills
    - **Navigation**:
      - `↑` / `↓` (or `k` / `j`): Move selection cursor between identified skills.
    - **Action**:
-     - `Enter`: Open the selected skill's GitHub definition directly in the default web browser.
-     - `q` / `Esc` / `Ctrl+C`: Exit the interactive menu.
+     - `Enter`: Open the selected skill's GitHub definition in the default web browser. The menu stays open and shows a status line, so several skills can be opened in a row.
+     - `q` / `Esc` / `Ctrl+C`: Leave the menu and return to the `skill-atlas>` prompt.
+
+4. **Persistent Interactive Session (`skill-atlas>` prompt)**:
+   - Started in an interactive terminal (stdin and stdout are TTYs) when:
+     - `skill-atlas` is run without arguments, or `skill-atlas scan` without a repository (the session starts empty);
+     - `skill-atlas scan <githubrepo>` is run without `--json` (the repository is scanned first, then the session continues).
+   - `--json` output and non-TTY environments stay one-shot: results are printed once and the process exits (exit code 1 on scan errors).
+   - The session never ends because of a scan: after a scan, leaving the menu, or an error, the prompt is shown again.
+   - `--token`, `--branch`, `--no-cache` and `--db-path` given on the command line apply to every scan in the session.
+   - **Commands** (case-insensitive command word):
+
+     | Command | Behavior |
+     | --- | --- |
+     | `scan <githubrepo> [-b\|--branch <BRANCH>] [--refresh\|--no-cache]` | Scan a repository and show the interactive menu. A bare repository (contains `/` or starts with `git@`) is treated as `scan <repo>`. Missing repository, a missing branch value, extra repositories or unknown options print `Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh]`. |
+     | `rescan` / `refresh` | Re-scan the last successfully scanned repository (same branch), bypassing the cache. Without a previous scan: `Nothing to rescan yet. Run 'scan <githubrepo>' first.` |
+     | `list` / `ls` | Show the skills of the last scan again in the menu. |
+     | `open <number\|name>` | Open a skill of the last scan in the browser: 1-based index, else exact case-insensitive name, else first name containing the query. Out-of-range index: `Invalid index. Please choose between 1 and N.`; no match: `Skill matching '<query>' not found in recent results.`; no argument: `Usage: open <number\|name>`. |
+     | `help` / `?` | List available commands. |
+     | `clear` / `cls` | Clear the terminal screen. |
+     | `exit` / `quit` / `q` | Print `Goodbye!` and exit. End of input (`Ctrl+D`) also exits. |
+
+   - Empty lines are ignored; any other input prints `Unknown command: '<cmd>'. Type 'help' for available commands.`
+   - `list` and `open` before any skills were found print `No skills listed yet in this session. Run 'scan <githubrepo>' first.`
+   - Scan errors (not found, rate limit, invalid identifier, network) are printed as `❌ Error: ...` and the session continues; the results of the previous successful scan are kept.
+   - A repository with no skills prints `No agent skills found in <owner/repo>.` and clears the previous results.
+   - A failure to launch the browser is reported (`Failed to open browser: ...`) without ending the session.
