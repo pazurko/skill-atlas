@@ -47,6 +47,9 @@ pub enum Commands {
 }
 
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
+    // Pick up GITHUB_TOKEN (and friends) from ./.env or the .env above the executable, without
+    // overriding variables already set in the environment.
+    crate::dotenv::load_default_dotenv();
     let cli = Cli::parse();
     execute_cli(cli).await
 }

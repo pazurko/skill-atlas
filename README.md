@@ -93,6 +93,7 @@ skill-atlas scan owner/repo --json
 
 # Using GitHub token (to avoid rate limits)
 skill-atlas scan owner/repo --token your_github_token
+# ...or put GITHUB_TOKEN=... into a .env file in the current directory (loaded automatically)
 
 # Bypass SQLite cache and force re-scan
 skill-atlas scan owner/repo --no-cache
