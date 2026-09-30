@@ -1,3 +1,4 @@
+use crate::history::OpenHistory;
 use crate::interactive::present_skills;
 use crate::scanner::{scan_github_repo, ScanResult, ScannerOptions, Skill};
 use colored::*;
@@ -6,7 +7,6 @@ use crossterm::{
     terminal::{Clear, ClearType},
 };
 use std::io::{self, BufRead, Write};
-use std::path::Path;
 
 pub const PROMPT: &str = "skill-atlas> ";
 
@@ -27,6 +27,8 @@ pub enum ReplCommand {
     List,
     /// Open a skill from the last scan by number or name.
     Open(String),
+    /// Show every skill opened in this session (audit trail).
+    History,
     Help,
     Clear,
     Exit,
@@ -51,6 +53,7 @@ pub fn parse_command(line: &str) -> ReplCommand {
         "clear" | "cls" => ReplCommand::Clear,
         "list" | "ls" => ReplCommand::List,
         "rescan" | "refresh" => ReplCommand::Rescan,
+        "history" | "opened" => ReplCommand::History,
         "open" => {
             if args.is_empty() {
                 ReplCommand::Invalid(OPEN_USAGE.to_string())
@@ -111,12 +114,14 @@ fn parse_scan_args(args: &[&str]) -> ReplCommand {
 
 /// Terminal side effects of the prompt session, abstracted so the loop can be tested.
 pub trait ReplUi {
-    /// Presents the skills of a scan (interactive menu in a TTY).
+    /// Presents the skills of a scan (interactive menu in a TTY). Skills opened from the menu
+    /// must be recorded in `history`.
     fn show_skills(
         &mut self,
         out: &mut dyn Write,
         skills: &[Skill],
         repo_name: &str,
+        history: &mut OpenHistory,
     ) -> io::Result<()>;
     /// Opens a URL in the default browser.
     fn open_url(&mut self, url: &str) -> io::Result<()>;
@@ -133,9 +138,10 @@ impl ReplUi for TerminalUi {
         out: &mut dyn Write,
         skills: &[Skill],
         repo_name: &str,
+        history: &mut OpenHistory,
     ) -> io::Result<()> {
         out.flush()?;
-        present_skills(skills, Some(repo_name), false)?;
+        present_skills(skills, Some(repo_name), false, history)?;
         Ok(())
     }
 
@@ -163,6 +169,8 @@ pub struct ReplSession {
     pub repo_name: Option<String>,
     /// Skills of the last successful scan.
     pub skills: Vec<Skill>,
+    /// Every skill opened in this session, across repositories.
+    pub history: OpenHistory,
 }
 
 impl ReplSession {
@@ -220,11 +228,11 @@ impl ReplSession {
                         format!("\nNo agent skills found in {}.\n", repo_name.bold()).yellow()
                     )?;
                 } else {
-                    ui.show_skills(out, &self.skills, &repo_name)?;
+                    ui.show_skills(out, &self.skills, &repo_name, &mut self.history)?;
                     writeln!(
                         out,
                         "{}",
-                        "Type 'open <number|name>', 'list', 'scan <githubrepo>', 'rescan' or 'help'."
+                        "Type 'open <number|name>', 'list', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
                             .dimmed()
                     )?;
                 }
@@ -307,10 +315,10 @@ impl ReplSession {
                     )?;
                 } else {
                     let repo_name = self.repo_name.clone().unwrap_or_default();
-                    let skills = self.skills.clone();
-                    ui.show_skills(out, &skills, &repo_name)?;
+                    ui.show_skills(out, &self.skills, &repo_name, &mut self.history)?;
                 }
             }
+            ReplCommand::History => self.history.write_all(out)?,
             ReplCommand::Open(query) => match self.find_skill(&query) {
                 Ok(skill) => {
                     let skill = skill.clone();
@@ -321,9 +329,29 @@ impl ReplSession {
                         skill.name.bold(),
                         skill.url.blue()
                     )?;
-                    if let Err(e) = ui.open_url(&skill.url) {
+                    let same_name = self
+                        .skills
+                        .iter()
+                        .filter(|s| s.name.eq_ignore_ascii_case(&skill.name))
+                        .count();
+                    if same_name > 1 && query.trim().parse::<usize>().is_err() {
+                        writeln!(
+                            out,
+                            "{}",
+                            format!(
+                                "Note: {} skills are named '{}'; opened {}. Use 'open <number>' to pick another.",
+                                same_name, skill.name, skill.path
+                            )
+                            .yellow()
+                        )?;
+                    }
+                    let repo_name = self.repo_name.clone().unwrap_or_default();
+                    let error = ui.open_url(&skill.url).err();
+                    if let Some(e) = &error {
                         writeln!(out, "{} Failed to open browser: {}", "❌".red(), e)?;
                     }
+                    self.history
+                        .record(&repo_name, &skill, error.map(|e| e.to_string()));
                 }
                 Err(msg) => writeln!(out, "{}", msg.yellow())?,
             },
@@ -377,6 +405,10 @@ pub fn write_help<W: Write>(out: &mut W) -> io::Result<()> {
             "open <number|name>",
             "Open a skill from the last scan in your browser",
         ),
+        (
+            "history",
+            "Show every skill opened in this session (audit trail)",
+        ),
         ("help", "Show this help"),
         ("clear", "Clear the terminal screen"),
         ("exit, quit, q", "Exit Skill Atlas"),
@@ -427,10 +459,7 @@ pub fn write_skill_list<W: Write + ?Sized>(
         format!("({} skills)", skills.len()).green()
     )?;
     for (idx, skill) in skills.iter().enumerate() {
-        let filename = Path::new(&skill.path)
-            .file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or("SKILL.md");
+        let filename = crate::interactive::skill_badge_label(skill, skills);
         writeln!(
             out,
             " [{}] › {} [{}]\n     {}\n     {}",

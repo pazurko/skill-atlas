@@ -376,7 +376,8 @@ pub async fn scan_github_repo(
         })
         .collect();
 
-    skills.sort_by_key(|a| a.name.to_lowercase());
+    // Ties (several skills with the same name) are ordered by path so the order is stable.
+    skills.sort_by_key(|a| (a.name.to_lowercase(), a.path.clone()));
 
     // 5. Save to SQLite cache
     if let Some(ref mut conn) = db_conn {

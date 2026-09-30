@@ -1,0 +1,23 @@
+{
+  "sha": "tree-fixture",
+  "truncated": false,
+  "tree": [
+    { "path": "README.md", "type": "blob", "sha": "b-readme" },
+    { "path": "SKILL.md", "type": "blob", "sha": "b-root" },
+    { "path": ".claude", "type": "tree", "sha": "t-claude" },
+    { "path": ".claude/skills/code-review/SKILL.md", "type": "blob", "sha": "b-review-claude" },
+    { "path": ".claude/skills/code-review/references/checklist.md", "type": "blob", "sha": "b-checklist" },
+    { "path": ".agents/skills/data sync/Skill.md", "type": "blob", "sha": "b-data-sync" },
+    { "path": ".junie/skills/deploy/skill.yaml", "type": "blob", "sha": "b-deploy" },
+    { "path": "docs/ünïcode-skills/übersetzen/SKILL.md", "type": "blob", "sha": "b-unicode" },
+    { "path": "my-venv-tools/skills/lint/skill.json", "type": "blob", "sha": "b-lint" },
+    { "path": "skills/no-frontmatter/SKILL.md", "type": "blob", "sha": "b-heading" },
+    { "path": "skills/folder-named/SKILL.md", "type": "tree", "sha": "t-folder-named-skill" },
+    { "path": "plugins/mcp-tools/resources/jetbrains/agents/mcp/skills/code-review/SKILL.md", "type": "blob", "sha": "b-review-plugin" },
+    { "path": "plugins/mcp-tools/resources/jetbrains/agents/mcp/skills/run-tests/SKILL.md", "type": "blob", "sha": "b-run-tests" },
+    { "path": "plugins/mcp-tools/build.gradle.kts", "type": "blob", "sha": "b-gradle" },
+    { "path": "node_modules/some-pkg/skills/vendored/SKILL.md", "type": "blob", "sha": "b-node-modules" },
+    { "path": "tools/.venv/lib/python3.12/site-packages/pkg/SKILL.md", "type": "blob", "sha": "b-venv" },
+    { "path": "web/__pycache__/SKILL.md", "type": "blob", "sha": "b-pycache" }
+  ]
+}

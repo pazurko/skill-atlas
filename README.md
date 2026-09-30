@@ -14,6 +14,8 @@ Skill Atlas is a high-performance interactive CLI built in Rust designed to scan
 - **Interactive Terminal Menu**:
   - `↑` / `↓` (or `k` / `j`): Move selection cursor between discovered skills.
   - `Enter`: Open the selected skill's GitHub page in the default browser — the menu stays open so you can open more skills.
+  - Opened skills are marked `✓ opened`, and the last opens stay listed below the menu while you navigate (`history` at the prompt shows the full audit of the session).
+  - Skills sharing a name (e.g. one in `.claude/skills` and one shipped in a plugin) are all listed, with their full path shown so you can tell them apart.
   - `q` / `Esc` / `Ctrl+C`: Leave the menu and return to the `skill-atlas>` prompt.
 - **Persistent Interactive Session**: The CLI does not stop after one scan. From the `skill-atlas>` prompt you can scan other repositories, re-scan, list and open skills again, until you type `exit`.
 - **Flexible Repository Inputs**: Accepts `owner/repo`, full HTTPS URLs (`https://github.com/owner/repo`), and SSH URLs (`git@github.com:...`).
@@ -76,6 +78,7 @@ skill-atlas> exit
 | `rescan` / `refresh` | Re-scan the last repository, bypassing the cache |
 | `list` / `ls` | Show the skills of the last scan again |
 | `open <number\|name>` | Open a skill from the last scan in the browser |
+| `history` / `opened` | Show every skill opened in this session (time, repo, name, URL) |
 | `help` / `?` | Show available commands |
 | `clear` | Clear the screen |
 | `exit` / `quit` / `q` / `Ctrl+D` | Exit Skill Atlas |

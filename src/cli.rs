@@ -203,7 +203,12 @@ async fn scan_and_present(
             }
 
             let repo_name = format!("{}/{}", result.owner, result.repo);
-            present_skills(&result.skills, Some(&repo_name), false)?;
+            present_skills(
+                &result.skills,
+                Some(&repo_name),
+                false,
+                &mut crate::history::OpenHistory::new(),
+            )?;
             Ok(())
         }
         Err(err) => {
