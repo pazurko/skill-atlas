@@ -61,7 +61,9 @@ JetBrains/kotlin 6 skills
    - If the repository has updated or is scanned for the first time, loads the whole repository tree in a single request (`git/trees/<branch>?recursive=1`, no depth limit) and selects skill definitions:
      - Only files named `SKILL.md`, `skill.json`, `skill.yaml` or `skill.yml` (any letter case, at any depth, e.g. under `.agents/skills`, `.claude/skills`, `.junie/skills`, `skills/`) are skills. Other files inside skill folders (e.g. `references/*.md`) are supporting documents and are neither downloaded nor listed.
      - Files inside vendored, generated or VCS folders (`.git`, `.hg`, `.svn`, `node_modules`, `.venv`, `venv`, `__pycache__`, `.tox`, `.mypy_cache`, `.pytest_cache`, `site-packages`) are ignored. Only whole folder names match (`my-venv-tools/` is not ignored).
-   - Skill files are downloaded concurrently (at most 16 at a time) from `raw.githubusercontent.com` at the scanned commit, which does not count against the GitHub API rate limit; if that fails, the GitHub Blobs API is used. Results are sorted by name.
+     - Only `blob` entries count (a folder that is itself named `SKILL.md` is not a skill). Folder names with spaces, unicode or mixed case are supported, and skills shipped inside plugins/resources (e.g. `plugins/<plugin>/resources/.../skills/<skill>/SKILL.md`) are found like any other.
+   - Skill files are downloaded concurrently (at most 16 at a time) from `raw.githubusercontent.com` at the scanned commit, which does not count against the GitHub API rate limit; if that fails, the GitHub Blobs API is used. Results are sorted by name (case-insensitive), then by path.
+   - **Duplicate names**: several skills with the same name (e.g. one in `.claude/skills` and one shipped in a plugin) are all kept. In the menu and plain list their file badge shows the full path instead of just the file name, so they can be told apart.
    - If GitHub reports the tree as truncated (very large repositories), the scan still returns the skills found and prints `⚠️  Warning: GitHub truncated the repository tree for this large repository; results may be incomplete.`; `--json` output contains `"truncated": true`.
    - Extracts and cleans metadata (skill name, first sentence of description, file path, GitHub URL) across YAML frontmatter, JSON, YAML files, and Markdown headings.
    - Saves the fresh scan results and commit SHA into the local SQLite database.
@@ -72,7 +74,8 @@ JetBrains/kotlin 6 skills
    - **Navigation**:
      - `↑` / `↓` (or `k` / `j`): Move selection cursor between identified skills.
    - **Action**:
-     - `Enter`: Open the selected skill's GitHub definition in the default web browser. The menu stays open and shows a status line, so several skills can be opened in a row.
+     - `Enter`: Open the selected skill's GitHub definition in the default web browser. The menu stays open and shows a status line, so several skills can be opened in a row. The status line is kept while navigating (it only changes on the next open).
+   - **Opened history (audit)**: every open attempt (from the menu or `open`) is recorded for the whole session, across repositories, with local time (`HH:MM:SS`), `owner/repo`, skill name and URL; failed browser launches are recorded as `✗ ... (failed: <error>)`. Skills opened successfully are marked `✓ opened` in the menu, and the menu shows the 5 most recent entries below the key hints under `Opened in this session (N, 'history' at the prompt shows all):`. A one-shot `scan` outside a session keeps the history only while the menu is open.
      - `q` / `Esc` / `Ctrl+C`: Leave the menu and return to the `skill-atlas>` prompt.
 
 4. **Persistent Interactive Session (`skill-atlas>` prompt)**:
@@ -89,7 +92,8 @@ JetBrains/kotlin 6 skills
      | `scan <githubrepo> [-b\|--branch <BRANCH>] [--refresh\|--no-cache]` | Scan a repository and show the interactive menu. A bare repository (contains `/` or starts with `git@`) is treated as `scan <repo>`. Missing repository, a missing branch value, extra repositories or unknown options print `Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh]`. |
      | `rescan` / `refresh` | Re-scan the last successfully scanned repository (same branch), bypassing the cache. Without a previous scan: `Nothing to rescan yet. Run 'scan <githubrepo>' first.` |
      | `list` / `ls` | Show the skills of the last scan again in the menu. |
-     | `open <number\|name>` | Open a skill of the last scan in the browser: 1-based index, else exact case-insensitive name, else first name containing the query. Out-of-range index: `Invalid index. Please choose between 1 and N.`; no match: `Skill matching '<query>' not found in recent results.`; no argument: `Usage: open <number\|name>`. |
+     | `open <number\|name>` | Open a skill of the last scan in the browser: 1-based index, else exact case-insensitive name, else first name containing the query. When the matched name is shared by several skills, the first (by path) is opened and `Note: <n> skills are named '<name>'; opened <path>. Use 'open <number>' to pick another.` is printed. Out-of-range index: `Invalid index. Please choose between 1 and N.`; no match: `Skill matching '<query>' not found in recent results.`; no argument: `Usage: open <number\|name>`. |
+     | `history` / `opened` | List every skill opened in this session, oldest first, under `Opened in this session (N):`. Empty: `Nothing opened yet in this session.` |
      | `help` / `?` | List available commands. |
      | `clear` / `cls` | Clear the terminal screen. |
      | `exit` / `quit` / `q` | Print `Goodbye!` and exit. End of input (`Ctrl+D`) also exits. |

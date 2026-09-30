@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod dotenv;
+pub mod history;
 pub mod interactive;
 pub mod metadata;
 pub mod parser;

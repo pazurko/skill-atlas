@@ -1,4 +1,6 @@
 use serde_json::json;
+use skill_atlas::history::OpenHistory;
+use skill_atlas::interactive::{MenuAction, MenuState};
 use skill_atlas::repl::{
     parse_command, run_repl, write_skill_list, ReplCommand, ReplSession, ReplUi, OPEN_USAGE,
     SCAN_USAGE,
@@ -15,6 +17,8 @@ struct RecordingUi {
     opened: Vec<String>,
     clears: usize,
     fail_open: bool,
+    /// Skill indices "opened with Enter" inside the menu, consumed one per menu visit.
+    menu_opens: Vec<Vec<usize>>,
 }
 
 impl ReplUi for RecordingUi {
@@ -23,9 +27,27 @@ impl ReplUi for RecordingUi {
         out: &mut dyn Write,
         skills: &[Skill],
         repo_name: &str,
+        history: &mut OpenHistory,
     ) -> io::Result<()> {
         self.shown.push((repo_name.to_string(), skills.len()));
-        write_skill_list(out, skills, repo_name)
+        write_skill_list(out, skills, repo_name)?;
+        if !self.menu_opens.is_empty() {
+            let opens = self.menu_opens.remove(0);
+            let mut state = MenuState::default();
+            for idx in opens {
+                state.apply(
+                    MenuAction::Open(idx),
+                    skills,
+                    repo_name,
+                    history,
+                    &mut |_| Ok(()),
+                );
+                state.apply(MenuAction::Move(0), skills, repo_name, history, &mut |_| {
+                    Ok(())
+                });
+            }
+        }
+        Ok(())
     }
 
     fn open_url(&mut self, url: &str) -> io::Result<()> {
@@ -429,5 +451,133 @@ async fn test_session_warns_when_tree_is_truncated() {
 
     assert!(out.contains("results may be incomplete"));
     assert_eq!(ui.shown.len(), 1);
+    let _ = std::fs::remove_file(db);
+}
+
+#[test]
+fn test_parse_history_command() {
+    assert_eq!(parse_command("history"), ReplCommand::History);
+    assert_eq!(parse_command("OPENED"), ReplCommand::History);
+}
+
+#[tokio::test]
+async fn test_history_is_an_audit_of_menu_and_open_across_repos() {
+    let server = MockServer::start().await;
+    mount_repo(
+        &server,
+        "acme",
+        "one",
+        "sha1",
+        &[("alpha", "alpha"), ("beta", "beta")],
+    )
+    .await;
+    mount_repo(&server, "acme", "two", "sha2", &[("gamma", "gamma")]).await;
+    let (options, db) = options_for(&server, "history");
+
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi {
+        // First menu visit: Enter on beta, then on alpha. Later visits open nothing.
+        menu_opens: vec![vec![1, 0]],
+        ..Default::default()
+    };
+    let out = run_script(
+        &mut session,
+        &mut ui,
+        "history\nscan acme/one\nscan acme/two\nopen gamma\nlist\nhistory\nexit\n",
+    )
+    .await;
+
+    assert!(out.contains("Nothing opened yet in this session."));
+    assert!(out.contains("Opened in this session (3):"));
+    let names: Vec<(&str, &str)> = session
+        .history
+        .records()
+        .iter()
+        .map(|r| (r.repo.as_str(), r.name.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            ("acme/one", "beta"),
+            ("acme/one", "alpha"),
+            ("acme/two", "gamma")
+        ]
+    );
+    // The history survives new scans and further menu visits.
+    assert_eq!(ui.shown.len(), 3);
+    let history_part = &out[out.rfind("Opened in this session").unwrap()..];
+    for url_part in [
+        "skills/beta/SKILL.md",
+        "skills/alpha/SKILL.md",
+        "skills/gamma/SKILL.md",
+    ] {
+        assert!(history_part.contains(url_part), "missing {url_part}");
+    }
+    let _ = std::fs::remove_file(db);
+}
+
+#[tokio::test]
+async fn test_history_records_failed_browser_launch() {
+    let server = MockServer::start().await;
+    mount_repo(&server, "acme", "one", "sha1", &[("alpha", "alpha")]).await;
+    let (options, db) = options_for(&server, "history_fail");
+
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi {
+        fail_open: true,
+        ..Default::default()
+    };
+    let out = run_script(
+        &mut session,
+        &mut ui,
+        "scan acme/one\nopen 1\nhistory\nexit\n",
+    )
+    .await;
+
+    assert_eq!(session.history.len(), 1);
+    assert_eq!(
+        session.history.records()[0].error.as_deref(),
+        Some("no browser")
+    );
+    assert!(out.contains("failed: no browser"));
+    let _ = std::fs::remove_file(db);
+}
+
+#[tokio::test]
+async fn test_open_by_name_warns_about_duplicate_names() {
+    let server = MockServer::start().await;
+    // Two different folders declaring the same skill name.
+    mount_repo(
+        &server,
+        "acme",
+        "dups",
+        "shad",
+        &[("review-a", "review"), ("review-b", "review")],
+    )
+    .await;
+    let (options, db) = options_for(&server, "dups");
+
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi::default();
+    let out = run_script(
+        &mut session,
+        &mut ui,
+        "scan acme/dups\nopen review\nopen 2\nexit\n",
+    )
+    .await;
+
+    // Both are kept, ordered by path, and listed with their path so they can be told apart.
+    assert_eq!(session.skills.len(), 2);
+    assert_eq!(session.skills[0].path, "skills/review-a/SKILL.md");
+    assert_eq!(session.skills[1].path, "skills/review-b/SKILL.md");
+    assert!(out.contains("skills/review-b/SKILL.md ↗"));
+    assert!(out.contains("Note: 2 skills are named 'review'; opened skills/review-a/SKILL.md"));
+    assert_eq!(
+        out.matches("Note: 2 skills").count(),
+        1,
+        "no note when opening by number"
+    );
+    assert_eq!(ui.opened.len(), 2);
+    assert!(ui.opened[1].ends_with("skills/review-b/SKILL.md"));
     let _ = std::fs::remove_file(db);
 }
