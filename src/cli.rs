@@ -46,6 +46,42 @@ pub enum Commands {
         #[arg(long)]
         db_path: Option<PathBuf>,
     },
+
+    /// Start localhost web interface for scanning and viewing skills
+    #[command(alias = "serve")]
+    Web {
+        /// Host address to bind to (default: 127.0.0.1)
+        #[arg(short = 'H', long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to listen on (default: 3000)
+        #[arg(short, long, default_value_t = 3000)]
+        port: u16,
+
+        /// Do not automatically open the web browser on startup
+        #[arg(long)]
+        no_open: bool,
+
+        /// Automatically open the web interface in the default browser
+        #[arg(long, conflicts_with = "no_open")]
+        open: bool,
+
+        /// GitHub personal access token (optional, to avoid rate limits)
+        #[arg(short, long)]
+        token: Option<String>,
+
+        /// Git branch or ref to scan by default (default: HEAD)
+        #[arg(short, long)]
+        branch: Option<String>,
+
+        /// Bypass local SQLite cache by default
+        #[arg(long, alias = "refresh")]
+        no_cache: bool,
+
+        /// Custom path to SQLite database for caching
+        #[arg(long)]
+        db_path: Option<PathBuf>,
+    },
 }
 
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,6 +94,32 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
+        Some(Commands::Web {
+            host,
+            port,
+            no_open,
+            open: _,
+            token,
+            branch,
+            no_cache,
+            db_path,
+        }) => {
+            let options = ScannerOptions {
+                token,
+                branch,
+                base_api_url: None,
+                base_raw_url: None,
+                no_cache,
+                db_path,
+            };
+            let web_options = crate::web::WebOptions {
+                host,
+                port,
+                open_browser: !no_open,
+                scanner_options: options,
+            };
+            crate::web::start_web_server(web_options).await
+        }
         Some(Commands::Scan {
             githubrepo: Some(repo),
             token,

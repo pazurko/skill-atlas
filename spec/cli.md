@@ -9,6 +9,9 @@ Skill Atlas is an interactive CLI designed to maximize developer efficiency and 
 # Direct scanning via subcommand
 skill-atlas scan <githubrepo> [OPTIONS]
 
+# Start localhost web interface
+skill-atlas web [OPTIONS]
+
 # Interactive session (persistent `skill-atlas>` prompt when launched without arguments)
 skill-atlas
 ```
@@ -20,6 +23,16 @@ skill-atlas
 - `--json`: Output raw JSON scan results instead of interactive menu.
 - `--no-cache` (alias: `--refresh`): Bypass local SQLite cache and re-scan GitHub directly.
 - `--db-path <PATH>`: Custom SQLite database path (default: `~/.skill-atlas/skills.db`).
+
+### Web Interface Options (`skill-atlas web` / `skill-atlas serve`)
+- `-H, --host <HOST>`: Host address to bind the web server (default: `127.0.0.1`).
+- `-p, --port <PORT>`: Port number to listen on (default: `3000`).
+- `--no-open`: Do not automatically open the web browser on startup.
+- `--open`: Explicitly open the browser on startup (default behavior).
+- `-t, --token <TOKEN>`: Default GitHub personal access token for web scans.
+- `-b, --branch <BRANCH>`: Default branch or ref (default: `HEAD`).
+- `--no-cache` (alias: `--refresh`): Bypass local SQLite cache by default.
+- `--db-path <PATH>`: Custom SQLite database path.
 
 ## Output Example & Visual Presentation
 
@@ -94,6 +107,7 @@ JetBrains/kotlin 6 skills
      | `list` / `ls` | Show the skills of the last scan again in the menu. |
      | `open <number\|name>` | Open a skill of the last scan in the browser: 1-based index, else exact case-insensitive name, else first name containing the query. When the matched name is shared by several skills, the first (by path) is opened and `Note: <n> skills are named '<name>'; opened <path>. Use 'open <number>' to pick another.` is printed. Out-of-range index: `Invalid index. Please choose between 1 and N.`; no match: `Skill matching '<query>' not found in recent results.`; no argument: `Usage: open <number\|name>`. |
      | `history` / `opened` | List every skill opened in this session, oldest first, under `Opened in this session (N):`. Empty: `Nothing opened yet in this session.` |
+     | `web` / `serve` | Start the localhost web interface and open it in the default browser (`web [--port <PORT>] [--no-open]`). |
      | `help` / `?` | List available commands. |
      | `clear` / `cls` | Clear the terminal screen. |
      | `exit` / `quit` / `q` | Print `Goodbye!` and exit. End of input (`Ctrl+D`) also exits. |
@@ -103,3 +117,20 @@ JetBrains/kotlin 6 skills
    - Scan errors (not found, rate limit, invalid identifier, network) are printed as `❌ Error: ...` and the session continues; the results of the previous successful scan are kept.
    - A repository with no skills prints `No agent skills found in <owner/repo>.` and clears the previous results.
    - A failure to launch the browser is reported (`Failed to open browser: ...`) without ending the session.
+
+5. **Localhost Web Interface**:
+   - Launched using `skill-atlas web` (or `skill-atlas serve`) from the terminal or `web` / `serve` within the interactive prompt.
+   - Binds an HTTP server to the configured host and port (default: `127.0.0.1:3000`) and opens the default browser unless `--no-open` is specified.
+   - **Frontend GUI Capabilities**:
+     - Modern single-page application embedded in the binary.
+     - **Repository Scan Form**: Input fields for repository identifier / URL (`owner/repo`, `https://github.com/...`, `git@github.com:...`), branch ref, optional GitHub token, and cache bypass toggle.
+     - **Results View**: Displays repository badges, total skills count, branch, commit SHA, and cache state indicators (`📦 SQLite Cache` vs `⚡ Fresh Scan`).
+     - **Real-time Filter**: Instant search filter by skill name, description, or file path with item counter.
+     - **Skill Cards**: Numbered cards displaying skill name, file badge (`SKILL.md ↗`, `skill.yaml ↗`, or disambiguated full path), clean description, copyable path, and direct link to open the definition on GitHub.
+     - **Cached History Sidebar**: Lists previously scanned repositories with quick-click reloading from local SQLite cache.
+   - **REST API Endpoints**:
+     - `GET /`: Serves the embedded HTML/CSS/JavaScript web interface.
+     - `POST /api/scan`: Executes scan for repository specified in JSON payload `{"repo": "owner/repo", "branch": "HEAD", "refresh": false, "token": "..."}`.
+     - `GET /api/scan?repo=...&branch=...&refresh=...`: Executes scan via query parameters.
+     - `GET /api/cached`: Returns JSON list of cached repositories.
+     - `GET /api/health`: Returns health status and application version.

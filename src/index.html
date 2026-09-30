@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skill Atlas ⚡ AI Agent Skills Explorer</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --card-border: #30363d;
+      --card-hover: #1c2128;
+      --accent: #58a6ff;
+      --accent-hover: #79b8ff;
+      --accent-glow: rgba(88, 166, 255, 0.2);
+      --success: #3fb950;
+      --success-bg: rgba(63, 185, 80, 0.15);
+      --warning: #d29922;
+      --warning-bg: rgba(210, 153, 34, 0.15);
+      --danger: #f85149;
+      --danger-bg: rgba(248, 81, 73, 0.15);
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, Liberation Mono, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #090d13;
+      border-bottom: 1px solid var(--card-border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: var(--text);
+    }
+
+    .logo-icon {
+      font-size: 1.75rem;
+    }
+
+    .brand h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand .tagline {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-left: 0.5rem;
+      padding-left: 0.75rem;
+      border-left: 1px solid var(--card-border);
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      background: var(--success-bg);
+      color: var(--success);
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+
+    .badge-status::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+    }
+
+    main {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2rem;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 2rem;
+    }
+
+    @media (max-width: 960px) {
+      main {
+        grid-template-columns: 1fr;
+        padding: 1rem;
+      }
+    }
+
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      height: fit-content;
+    }
+
+    .panel-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.825rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      background: #0d1117;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 0.6rem 0.8rem;
+      font-size: 0.9rem;
+      font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    input[type="text"]:focus, input[type="password"]:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .input-mono {
+      font-family: var(--font-mono) !important;
+      font-size: 0.85rem !important;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      font-size: 0.875rem;
+      color: var(--text);
+      user-select: none;
+    }
+
+    .checkbox-group input {
+      accent-color: var(--accent);
+      width: 16px;
+      height: 16px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      border-radius: 6px;
+      padding: 0.75rem 1.25rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.15s, transform 0.05s;
+    }
+
+    .btn:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn:active {
+      transform: scale(0.99);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .quick-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.75rem;
+    }
+
+    .chip {
+      background: #21262d;
+      border: 1px solid var(--card-border);
+      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .chip:hover {
+      background: #30363d;
+      border-color: var(--accent);
+    }
+
+    .cached-list {
+      margin-top: 1.5rem;
+      border-top: 1px solid var(--card-border);
+      padding-top: 1.25rem;
+    }
+
+    .cached-item {
+      padding: 0.6rem 0.75rem;
+      border-radius: 6px;
+      background: #0d1117;
+      border: 1px solid var(--card-border);
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    .cached-item:hover {
+      border-color: var(--accent);
+      background: #161b22;
+    }
+
+    .cached-item-name {
+      font-size: 0.825rem;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .cached-item-time {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .results-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .welcome-card {
+      background: var(--card-bg);
+      border: 1px dashed var(--card-border);
+      border-radius: 12px;
+      padding: 4rem 2rem;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .welcome-card .icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+
+    .welcome-card h2 {
+      color: var(--text);
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .banner {
+      padding: 1rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+
+    .banner-danger {
+      background: var(--danger-bg);
+      border: 1px solid var(--danger);
+      color: #ff7b72;
+    }
+
+    .banner-warning {
+      background: var(--warning-bg);
+      border: 1px solid var(--warning);
+      color: #e3b341;
+    }
+
+    .repo-header {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .repo-title-group {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .repo-name {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .repo-name:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+
+    .tag {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .tag-blue {
+      background: rgba(56, 139, 253, 0.15);
+      color: #58a6ff;
+      border: 1px solid rgba(56, 139, 253, 0.4);
+    }
+
+    .tag-green {
+      background: var(--success-bg);
+      color: var(--success);
+      border: 1px solid rgba(63, 185, 80, 0.4);
+    }
+
+    .filter-bar {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .search-input-wrapper {
+      position: relative;
+      flex: 1;
+    }
+
+    .search-input-wrapper input {
+      padding-left: 2.25rem;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 0.8rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .skills-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .skill-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      transition: border-color 0.15s, background 0.15s, transform 0.05s;
+      position: relative;
+    }
+
+    .skill-card:hover {
+      border-color: var(--accent);
+      background: var(--card-hover);
+    }
+
+    .skill-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .skill-index {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-right: 0.4rem;
+    }
+
+    .skill-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #58a6ff;
+      font-family: var(--font-mono);
+    }
+
+    .skill-file-badge {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid var(--card-border);
+      padding: 0.2rem 0.5rem;
+      border-radius: 6px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      white-space: nowrap;
+    }
+
+    .skill-file-badge:hover {
+      background: #30363d;
+      color: #ffffff;
+      border-color: var(--accent);
+    }
+
+    .skill-description {
+      color: #c9d1d9;
+      font-size: 0.9rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .skill-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      padding-top: 0.6rem;
+    }
+
+    .skill-path {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .skill-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .btn-sm {
+      padding: 0.35rem 0.75rem;
+      font-size: 0.75rem;
+      border-radius: 4px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      background: #21262d;
+      color: var(--text);
+      border: 1px solid var(--card-border);
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .btn-sm:hover {
+      background: #30363d;
+      border-color: var(--accent);
+      color: #ffffff;
+    }
+
+    .btn-sm-primary {
+      background: rgba(88, 166, 255, 0.15);
+      color: #58a6ff;
+      border-color: rgba(88, 166, 255, 0.3);
+    }
+
+    .btn-sm-primary:hover {
+      background: var(--accent);
+      color: #0d1117;
+      border-color: var(--accent);
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(0, 0, 0, 0.3);
+      border-radius: 50%;
+      border-top-color: #0d1117;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      border-top: 1px solid var(--card-border);
+      margin-top: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <a href="/" class="brand">
+      <span class="logo-icon">⚡</span>
+      <div>
+        <h1>Skill Atlas</h1>
+      </div>
+      <span class="tagline">AI Agent Skills Explorer</span>
+    </a>
+    <div class="header-links">
+      <span class="badge-status">Web Interface Active</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left Sidebar: Scan Form & Cache History -->
+    <aside>
+      <div class="panel">
+        <div class="panel-title">
+          <span>Scan Repository</span>
+        </div>
+        <form id="scan-form" onsubmit="handleScan(event)">
+          <div class="form-group">
+            <label for="repo-input">GitHub Repository</label>
+            <input type="text" id="repo-input" class="input-mono" placeholder="owner/repo or https://github.com/..." required autofocus autocomplete="off">
+            <div class="quick-chips">
+              <span class="chip" onclick="fillRepo('JetBrains/kotlin')">JetBrains/kotlin</span>
+              <span class="chip" onclick="fillRepo('anthropics/anthropic-quickstarts')">anthropic-quickstarts</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="branch-input">Git Branch / Ref</label>
+            <input type="text" id="branch-input" class="input-mono" placeholder="HEAD">
+          </div>
+
+          <div class="form-group">
+            <label for="token-input">GitHub Token (Optional)</label>
+            <input type="password" id="token-input" class="input-mono" placeholder="ghp_... (avoids rate limits)">
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-group">
+              <input type="checkbox" id="refresh-input">
+              <span>Bypass cache (Force fresh scan)</span>
+            </label>
+          </div>
+
+          <button type="submit" id="scan-btn" class="btn">
+            <span id="btn-text">🔍 Scan Repository</span>
+          </button>
+        </form>
+
+        <div class="cached-list">
+          <div class="panel-title">
+            <span>Recent Cached Scans</span>
+            <span id="cached-count" style="font-size: 0.75rem; color: var(--text-muted);">(0)</span>
+          </div>
+          <div id="cached-items-container">
+            <div style="font-size: 0.8rem; color: var(--text-muted);">No cached repositories yet.</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Right Content Area: Results -->
+    <section class="results-container">
+      <div id="error-banner" class="banner banner-danger" style="display: none;">
+        <span>❌</span>
+        <div id="error-message"></div>
+      </div>
+
+      <div id="truncated-banner" class="banner banner-warning" style="display: none;">
+        <span>⚠️</span>
+        <div>GitHub truncated the repository tree for this large repository; results may be incomplete.</div>
+      </div>
+
+      <div id="welcome-state" class="welcome-card">
+        <div class="icon">⚡</div>
+        <h2>Ready to Explore Agent Skills</h2>
+        <p>Enter a GitHub repository on the left or select a sample repository to discover defined agent skills.</p>
+      </div>
+
+      <div id="results-view" style="display: none; flex-direction: column; gap: 1.25rem;">
+        <div class="repo-header">
+          <div class="repo-title-group">
+            <a id="repo-header-link" href="#" target="_blank" class="repo-name">owner/repo</a>
+            <span id="skills-count-tag" class="tag tag-blue">0 skills</span>
+            <span id="branch-tag" class="tag" style="background:#21262d; color:#c9d1d9;">branch: HEAD</span>
+            <span id="cache-tag" class="tag tag-green">⚡ Live Scan</span>
+          </div>
+          <div id="commit-tag" style="font-size: 0.8rem; font-family: var(--font-mono); color: var(--text-muted);"></div>
+        </div>
+
+        <div class="filter-bar">
+          <div class="search-input-wrapper">
+            <span class="search-icon">🔎</span>
+            <input type="text" id="filter-input" placeholder="Filter skills by name, description, or path..." oninput="handleFilter(event)">
+          </div>
+          <span id="filter-status" style="font-size: 0.825rem; color: var(--text-muted); white-space: nowrap;"></span>
+        </div>
+
+        <div id="skills-list" class="skills-grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Skill Atlas &bull; AI Agent Skills Discovery &bull; Localhost Web Interface
+  </footer>
+
+  <script>
+    let currentSkills = [];
+    let duplicateNames = new Set();
+
+    function fillRepo(name) {
+      document.getElementById('repo-input').value = name;
+      document.getElementById('scan-form').dispatchEvent(new Event('submit'));
+    }
+
+    async function loadCachedRepos() {
+      try {
+        const res = await fetch('/api/cached');
+        if (!res.ok) return;
+        const repos = await res.json();
+        const container = document.getElementById('cached-items-container');
+        const count = document.getElementById('cached-count');
+        count.textContent = '(' + repos.length + ')';
+
+        if (repos.length === 0) {
+          container.innerHTML = '<div style="font-size: 0.8rem; color: var(--text-muted);">No cached repositories yet.</div>';
+          return;
+        }
+
+        container.innerHTML = repos.map(r => `
+          <div class="cached-item" onclick="loadCached('${escapeHtml(r.owner)}/${escapeHtml(r.repo)}', '${escapeHtml(r.branch)}')">
+            <div class="cached-item-name">${escapeHtml(r.owner)}/${escapeHtml(r.repo)}</div>
+            <div class="cached-item-time">${escapeHtml(r.branch)}</div>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error("Failed to load cached repos:", err);
+      }
+    }
+
+    function loadCached(repo, branch) {
+      document.getElementById('repo-input').value = repo;
+      document.getElementById('branch-input').value = branch === 'HEAD' ? '' : branch;
+      document.getElementById('refresh-input').checked = false;
+      document.getElementById('scan-form').dispatchEvent(new Event('submit'));
+    }
+
+    async function handleScan(event) {
+      event.preventDefault();
+      const repo = document.getElementById('repo-input').value.trim();
+      const branch = document.getElementById('branch-input').value.trim();
+      const token = document.getElementById('token-input').value.trim();
+      const refresh = document.getElementById('refresh-input').checked;
+
+      if (!repo) return;
+
+      const scanBtn = document.getElementById('scan-btn');
+      const btnText = document.getElementById('btn-text');
+      const errorBanner = document.getElementById('error-banner');
+      const truncatedBanner = document.getElementById('truncated-banner');
+      const welcomeState = document.getElementById('welcome-state');
+      const resultsView = document.getElementById('results-view');
+
+      errorBanner.style.display = 'none';
+      truncatedBanner.style.display = 'none';
+      scanBtn.disabled = true;
+      btnText.innerHTML = '<span class="spinner"></span> Scanning...';
+
+      try {
+        const payload = {
+          repo,
+          branch: branch || undefined,
+          token: token || undefined,
+          refresh
+        };
+
+        const response = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to scan repository');
+        }
+
+        welcomeState.style.display = 'none';
+        resultsView.style.display = 'flex';
+        renderResults(data);
+        loadCachedRepos();
+      } catch (err) {
+        errorBanner.style.display = 'flex';
+        document.getElementById('error-message').textContent = err.message;
+      } finally {
+        scanBtn.disabled = false;
+        btnText.innerHTML = '🔍 Scan Repository';
+      }
+    }
+
+    function computeDuplicateNames(skills) {
+      const counts = {};
+      for (const s of skills) {
+        const lower = s.name.toLowerCase();
+        counts[lower] = (counts[lower] || 0) + 1;
+      }
+      const dups = new Set();
+      for (const [name, count] of Object.entries(counts)) {
+        if (count > 1) dups.add(name);
+      }
+      return dups;
+    }
+
+    function renderResults(data) {
+      const repoFullName = `${data.owner}/${data.repo}`;
+      const repoLink = document.getElementById('repo-header-link');
+      repoLink.textContent = repoFullName;
+      repoLink.href = `https://github.com/${data.owner}/${data.repo}`;
+
+      const skillsCountTag = document.getElementById('skills-count-tag');
+      skillsCountTag.textContent = `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`;
+
+      const branchTag = document.getElementById('branch-tag');
+      branchTag.textContent = `branch: ${data.branch}`;
+
+      const cacheTag = document.getElementById('cache-tag');
+      if (data.from_cache) {
+        cacheTag.textContent = '📦 SQLite Cache';
+        cacheTag.className = 'tag tag-blue';
+      } else {
+        cacheTag.textContent = '⚡ Fresh Scan';
+        cacheTag.className = 'tag tag-green';
+      }
+
+      const commitTag = document.getElementById('commit-tag');
+      if (data.commit_sha) {
+        const shortSha = data.commit_sha.substring(0, 7);
+        commitTag.textContent = `commit: ${shortSha}`;
+      } else {
+        commitTag.textContent = '';
+      }
+
+      const truncatedBanner = document.getElementById('truncated-banner');
+      if (data.truncated) {
+        truncatedBanner.style.display = 'flex';
+      }
+
+      currentSkills = data.skills;
+      duplicateNames = computeDuplicateNames(currentSkills);
+
+      document.getElementById('filter-input').value = '';
+      renderSkillsList(currentSkills);
+    }
+
+    function renderSkillsList(skills) {
+      const list = document.getElementById('skills-list');
+      const filterStatus = document.getElementById('filter-status');
+
+      if (currentSkills.length > 0) {
+        filterStatus.textContent = `Showing ${skills.length} of ${currentSkills.length} skills`;
+      } else {
+        filterStatus.textContent = '';
+      }
+
+      if (skills.length === 0) {
+        list.innerHTML = `
+          <div style="text-align: center; padding: 3rem 1rem; color: var(--text-muted); background: var(--card-bg); border-radius: 8px;">
+            No agent skills matched your filter.
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = skills.map((skill, idx) => {
+        const isDuplicate = duplicateNames.has(skill.name.toLowerCase());
+        const badgeLabel = isDuplicate ? skill.path : (skill.path.split('/').pop() || skill.path);
+
+        return `
+          <div class="skill-card">
+            <div class="skill-header">
+              <div style="display: flex; align-items: center;">
+                <span class="skill-index">[${idx + 1}]</span>
+                <span class="skill-title">${escapeHtml(skill.name)}</span>
+              </div>
+              <a href="${escapeHtml(skill.url)}" target="_blank" class="skill-file-badge">
+                ${escapeHtml(badgeLabel)} ↗
+              </a>
+            </div>
+            <div class="skill-description">
+              ${escapeHtml(skill.description || 'No description provided.')}
+            </div>
+            <div class="skill-footer">
+              <span class="skill-path" title="${escapeHtml(skill.path)}">📁 ${escapeHtml(skill.path)}</span>
+              <div class="skill-actions">
+                <button class="btn-sm" onclick="copyText('${escapeHtml(skill.path)}')">Copy Path</button>
+                <a href="${escapeHtml(skill.url)}" target="_blank" class="btn-sm btn-sm-primary">
+                  Open in GitHub ↗
+                </a>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function handleFilter(event) {
+      const query = event.target.value.toLowerCase().trim();
+      if (!query) {
+        renderSkillsList(currentSkills);
+        return;
+      }
+
+      const filtered = currentSkills.filter(s =>
+        s.name.toLowerCase().includes(query) ||
+        s.description.toLowerCase().includes(query) ||
+        s.path.toLowerCase().includes(query)
+      );
+
+      renderSkillsList(filtered);
+    }
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text);
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // Auto-scan if query params present
+    window.addEventListener('DOMContentLoaded', () => {
+      loadCachedRepos();
+      const params = new URLSearchParams(window.location.search);
+      const repoParam = params.get('repo');
+      if (repoParam) {
+        document.getElementById('repo-input').value = repoParam;
+        if (params.get('branch')) {
+          document.getElementById('branch-input').value = params.get('branch');
+        }
+        document.getElementById('scan-form').dispatchEvent(new Event('submit'));
+      }
+    });
+  </script>
+</body>
+</html>

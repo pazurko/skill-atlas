@@ -155,6 +155,48 @@ fn test_parse_basic_commands() {
 }
 
 #[test]
+fn test_parse_web_command() {
+    assert_eq!(
+        parse_command("web"),
+        ReplCommand::Web {
+            port: None,
+            no_open: false
+        }
+    );
+    assert_eq!(
+        parse_command("serve"),
+        ReplCommand::Web {
+            port: None,
+            no_open: false
+        }
+    );
+    assert_eq!(
+        parse_command("web -p 8080"),
+        ReplCommand::Web {
+            port: Some(8080),
+            no_open: false
+        }
+    );
+    assert_eq!(
+        parse_command("web --port 8080 --no-open"),
+        ReplCommand::Web {
+            port: Some(8080),
+            no_open: true
+        }
+    );
+    assert_eq!(
+        parse_command("web --invalid-flag"),
+        ReplCommand::Invalid("Usage: web [--port <PORT>] [--no-open]".to_string())
+    );
+    assert_eq!(
+        parse_command("web --port notanumber"),
+        ReplCommand::Invalid(
+            "Invalid port number. Usage: web [--port <PORT>] [--no-open]".to_string()
+        )
+    );
+}
+
+#[test]
 fn test_parse_scan_variants() {
     assert_eq!(
         parse_command("scan acme/skills"),
