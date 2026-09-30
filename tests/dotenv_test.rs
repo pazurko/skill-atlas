@@ -1,4 +1,4 @@
-use skill_atlas::dotenv::{load_dotenv, parse_dotenv};
+use skill_atlas::dotenv::{find_dotenv_upwards, load_dotenv, parse_dotenv};
 
 #[test]
 fn test_parse_dotenv_handles_comments_export_and_quotes() {
@@ -43,6 +43,26 @@ fn test_load_dotenv_sets_missing_vars_without_overriding_existing() {
         "from_env"
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_find_dotenv_upwards_finds_nearest_ancestor() {
+    let root = std::env::temp_dir().join(format!(
+        "skill_atlas_dotenv_up_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let bin_dir = root.join("target").join("release");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    assert_eq!(
+        find_dotenv_upwards(&bin_dir).filter(|p| p.starts_with(&root)),
+        None
+    );
+    std::fs::write(root.join(".env"), "GITHUB_TOKEN=x\n").unwrap();
+    assert_eq!(find_dotenv_upwards(&bin_dir), Some(root.join(".env")));
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
