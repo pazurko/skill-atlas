@@ -403,3 +403,31 @@ async fn test_session_stops_reading_after_exit() {
     let out = run_script(&mut session, &mut ui, "exit\nhelp\n").await;
     assert!(!out.contains("Available commands:"));
 }
+
+#[tokio::test]
+async fn test_session_warns_when_tree_is_truncated() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/huge/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "tree",
+            "truncated": true,
+            "tree": [{ "path": "skills/alpha/SKILL.md", "type": "blob", "sha": "alpha" }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/huge/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "shah" })))
+        .mount(&server)
+        .await;
+    let (options, db) = options_for(&server, "truncated");
+
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi::default();
+    let out = run_script(&mut session, &mut ui, "scan acme/huge\nexit\n").await;
+
+    assert!(out.contains("results may be incomplete"));
+    assert_eq!(ui.shown.len(), 1);
+    let _ = std::fs::remove_file(db);
+}

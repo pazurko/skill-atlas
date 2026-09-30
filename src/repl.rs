@@ -204,6 +204,9 @@ impl ReplSession {
                 if let Some(msg) = cache_message(&result) {
                     writeln!(out, "{}", msg.green())?;
                 }
+                if let Some(msg) = truncation_message(&result) {
+                    writeln!(out, "{}", msg.yellow())?;
+                }
                 let repo_name = format!("{}/{}", result.owner, result.repo);
                 self.last_repo = Some(repo.to_string());
                 self.last_branch = branch;
@@ -382,6 +385,14 @@ pub fn write_help<W: Write>(out: &mut W) -> io::Result<()> {
         writeln!(out, "  {:<46} {}", cmd.cyan(), desc)?;
     }
     writeln!(out)
+}
+
+/// Warning shown when GitHub truncated the repository tree of a fresh scan.
+pub fn truncation_message(result: &ScanResult) -> Option<String> {
+    result.truncated.then(|| {
+        "⚠️  Warning: GitHub truncated the repository tree for this large repository; results may be incomplete."
+            .to_string()
+    })
 }
 
 /// Message shown when results were loaded from the SQLite cache.

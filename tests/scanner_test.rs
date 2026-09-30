@@ -8,11 +8,37 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 fn test_is_skill_path_positive() {
     assert!(is_skill_path("skills/weather/SKILL.md"));
     assert!(is_skill_path("skills/code-review/skill.yaml"));
-    assert!(is_skill_path(".agents/skills/deploy.json"));
-    assert!(is_skill_path(".claude/skills/test.md"));
-    assert!(is_skill_path(".junie/skills/analyze.yml"));
+    assert!(is_skill_path(".agents/skills/deploy/skill.json"));
+    assert!(is_skill_path(".claude/skills/test/Skill.md"));
+    assert!(is_skill_path(".junie/skills/analyze/skill.yml"));
     assert!(is_skill_path("SKILL.md"));
     assert!(is_skill_path("skill.json"));
+    // Deeply nested skills are still found (no depth limit)
+    assert!(is_skill_path(
+        "plugins/mcp-tools/resources/jetbrains/mps/agents/mcp/skills/x/SKILL.md"
+    ));
+}
+
+#[test]
+fn test_is_skill_path_ignores_supporting_docs_in_skill_folders() {
+    assert!(!is_skill_path(
+        ".agents/skills/bugfix-workflow/references/branch-naming.md"
+    ));
+    assert!(!is_skill_path(".claude/skills/test.md"));
+    assert!(!is_skill_path(".agents/skills/deploy.json"));
+    assert!(!is_skill_path("skills/weather/config.yaml"));
+    assert!(!is_skill_path("skills/MY_SKILL.md"));
+}
+
+#[test]
+fn test_is_skill_path_ignores_vendored_folders() {
+    assert!(!is_skill_path("node_modules/pkg/skills/x/SKILL.md"));
+    assert!(!is_skill_path("web/node_modules/pkg/SKILL.md"));
+    assert!(!is_skill_path(".venv/lib/site-packages/pkg/SKILL.md"));
+    assert!(!is_skill_path(".git/SKILL.md"));
+    assert!(!is_skill_path("a/__pycache__/SKILL.md"));
+    // A folder merely containing an ignored name as a substring is fine
+    assert!(is_skill_path("my-venv-tools/skills/x/SKILL.md"));
 }
 
 #[test]
@@ -312,6 +338,131 @@ async fn test_scan_cached_results_with_stale_main_urls_are_corrected() {
     assert!(result.from_cache);
     assert_eq!(result.skills[0].url, MASTER_URL);
     let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn test_scan_downloads_only_skill_files_concurrently_in_order() {
+    let server = MockServer::start().await;
+    let count = 40;
+    let mut tree = vec![
+        json!({ "path": ".agents/skills/s00/references/doc.md", "type": "blob", "sha": "r" }),
+        json!({ "path": "node_modules/pkg/SKILL.md", "type": "blob", "sha": "n" }),
+    ];
+    for i in 0..count {
+        tree.push(json!({ "path": format!(".agents/skills/s{:02}/SKILL.md", i), "type": "blob", "sha": format!("b{}", i) }));
+    }
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/many/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "sha_m" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/many"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/many/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "t", "tree": tree })))
+        .mount(&server)
+        .await;
+    for i in 0..count {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/acme/many/sha_m/.agents/skills/s{:02}/SKILL.md",
+                i
+            )))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(100))
+                    .set_body_string(format!(
+                        "---\nname: skill-{:02}\ndescription: Skill {}.\n---\n",
+                        i, i
+                    )),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+
+    let options = ScannerOptions {
+        token: None,
+        branch: None,
+        base_api_url: Some(server.uri()),
+        base_raw_url: Some(server.uri()),
+        no_cache: true,
+        db_path: None,
+    };
+    let started = std::time::Instant::now();
+    let result = scan_github_repo("acme/many", &options).await.unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(result.skills.len(), count);
+    assert!(!result.truncated);
+    for (i, skill) in result.skills.iter().enumerate() {
+        assert_eq!(skill.name, format!("skill-{:02}", i));
+        assert_eq!(skill.path, format!(".agents/skills/s{:02}/SKILL.md", i));
+    }
+    // 40 downloads of 100 ms each take ~4 s sequentially; concurrently well under 2 s.
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "scan took {:?}",
+        elapsed
+    );
+
+    // Only real skill files were downloaded: no reference docs, no vendored files, no blob API.
+    let requests = server.received_requests().await.unwrap();
+    assert!(!requests.iter().any(|r| r.url.path().contains("references")));
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().contains("node_modules")));
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().contains("/git/blobs/")));
+}
+
+#[tokio::test]
+async fn test_scan_falls_back_to_blob_api_and_reports_truncated_tree() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/big/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "sha_b" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/big/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "t",
+            "truncated": true,
+            "tree": [{ "path": "skills/deploy/SKILL.md", "type": "blob", "sha": "blob_d" }]
+        })))
+        .mount(&server)
+        .await;
+    // Raw download is not mocked (404), so the Blobs API is used.
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/big/git/blobs/blob_d"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("---\nname: deploy\ndescription: Deploys it.\n---\n"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let options = ScannerOptions {
+        token: None,
+        branch: None,
+        base_api_url: Some(server.uri()),
+        base_raw_url: Some(server.uri()),
+        no_cache: true,
+        db_path: None,
+    };
+    let result = scan_github_repo("acme/big", &options).await.unwrap();
+
+    assert!(result.truncated);
+    assert_eq!(result.skills.len(), 1);
+    assert_eq!(result.skills[0].name, "deploy");
+    assert_eq!(result.skills[0].description, "Deploys it.");
 }
 
 fn uuid_or_timestamp() -> u128 {

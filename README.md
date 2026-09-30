@@ -8,7 +8,8 @@ Skill Atlas is a high-performance interactive CLI built in Rust designed to scan
 
 - **Blazing Fast GitHub Scanner**: Built natively in Rust for high throughput and minimal resource usage.
 - **Local SQLite Caching**: Automatically saves scan results in a local SQLite database (`~/.skill-atlas/skills.db`). Subsequent scans verify whether the repository was updated on GitHub and reuse cached results to save bandwidth and API limits.
-- **Repository Tree Analysis**: Recursively identifies agent skill files (`SKILL.md`, `skill.json`, `skill.yaml`, `.agents/skills`, `.claude/skills`, `.junie/skills`, `skills/`, etc.).
+- **Repository Tree Analysis**: Loads the whole repository tree in one request and picks out skill files named `SKILL.md`, `skill.json` or `skill.yaml` at any depth (e.g. in `.agents/skills`, `.claude/skills`, `.junie/skills`, `skills/`). Supporting documents in skill folders and vendored folders such as `node_modules` or `.venv` are skipped.
+- **Fast Downloads**: Skill files are fetched concurrently (up to 16 at a time) from `raw.githubusercontent.com`, which doesn't use up the GitHub API rate limit. A warning is shown if GitHub truncates the tree of a very large repository.
 - **Automatic Metadata Extraction**: Parses skill names and first-sentence descriptions from YAML frontmatter, Markdown headings, or JSON/YAML configurations.
 - **Interactive Terminal Menu**:
   - `↑` / `↓` (or `k` / `j`): Move selection cursor between discovered skills.
