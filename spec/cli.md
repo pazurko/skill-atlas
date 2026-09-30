@@ -15,7 +15,7 @@ skill-atlas
 
 ### Arguments & Options
 - `<githubrepo>`: Target repository identifier or URL (e.g., `owner/repo`, `https://github.com/owner/repo`, or `git@github.com:...`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed to stderr.
-- `-t, --token <TOKEN>`: GitHub personal access token to prevent API rate limiting.
+- `-t, --token <TOKEN>`: GitHub personal access token to prevent API rate limiting. If omitted, `GITHUB_TOKEN` (then `GH_TOKEN`) from the environment is used. At startup, `KEY=VALUE` lines from a `.env` file in the current directory are loaded into the environment (blank lines and `#` comments skipped, `export ` prefix and quotes stripped); variables already set in the environment are never overridden, and a missing `.env` is ignored. Without a token GitHub allows only 60 API requests per hour per IP.
 - `-b, --branch <BRANCH>`: Target Git branch or ref (default: `HEAD`).
 - `--json`: Output raw JSON scan results instead of interactive menu.
 - `--no-cache` (alias: `--refresh`): Bypass local SQLite cache and re-scan GitHub directly.

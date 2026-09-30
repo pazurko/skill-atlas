@@ -47,6 +47,9 @@ pub enum Commands {
 }
 
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
+    // Like skill-atlas-mm: pick up GITHUB_TOKEN (and friends) from ./.env without overriding
+    // variables already set in the environment.
+    crate::dotenv::load_dotenv(std::path::Path::new(".env"));
     let cli = Cli::parse();
     execute_cli(cli).await
 }
