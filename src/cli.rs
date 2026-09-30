@@ -1,5 +1,7 @@
 use crate::interactive::present_skills;
-use crate::repl::{cache_message, run_repl, write_welcome, ReplSession, TerminalUi};
+use crate::repl::{
+    cache_message, run_repl, truncation_message, write_welcome, ReplSession, TerminalUi,
+};
 use crate::scanner::{scan_github_repo, ScannerOptions};
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -183,6 +185,9 @@ async fn scan_and_present(
 
             if let Some(msg) = cache_message(&result) {
                 println!("{}", msg.green());
+            }
+            if let Some(msg) = truncation_message(&result) {
+                println!("{}", msg.yellow());
             }
 
             if result.skills.is_empty() {

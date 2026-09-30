@@ -5,6 +5,27 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT}
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+
+/// Maximum number of skill files downloaded at the same time.
+pub const MAX_CONCURRENT_DOWNLOADS: usize = 16;
+
+/// Vendored, generated or VCS folders that never contain real skills.
+const IGNORED_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    "site-packages",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Skill {
@@ -24,6 +45,9 @@ pub struct ScanResult {
     pub from_cache: bool,
     #[serde(default)]
     pub commit_sha: Option<String>,
+    /// True when GitHub truncated the repository tree, so some skills may be missing.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,6 +87,8 @@ struct GitTreeResponse {
     sha: Option<String>,
     #[serde(default)]
     tree: Vec<GitTreeItem>,
+    #[serde(default)]
+    truncated: bool,
 }
 
 #[derive(Deserialize)]
@@ -118,41 +144,49 @@ async fn resolve_web_ref(
     "HEAD".to_string()
 }
 
-/// Determines if a file path qualifies as an agent skill definition.
+/// Determines if a file path qualifies as an agent skill definition: a file named
+/// `SKILL.md`, `skill.json`, `skill.yaml` or `skill.yml` (any letter case) that is not inside
+/// a vendored/generated folder. Other files in skill folders (e.g. `references/*.md`) are
+/// supporting documents, not skills.
 pub fn is_skill_path(path: &str) -> bool {
-    let normalized = path.to_lowercase();
-    let filename = normalized.split('/').next_back().unwrap_or("");
+    let normalized = path.replace('\\', "/").to_lowercase();
+    let mut parts: Vec<&str> = normalized.split('/').collect();
+    let filename = parts.pop().unwrap_or("");
 
-    // Check direct filenames
-    if matches!(
+    matches!(
         filename,
         "skill.md" | "skill.json" | "skill.yaml" | "skill.yml"
-    ) {
-        return true;
+    ) && !parts.iter().any(|dir| IGNORED_DIRS.contains(dir))
+}
+
+/// Downloads a text file, returning `None` on any failure or non-success status.
+async fn fetch_text(request: reqwest::RequestBuilder) -> Option<String> {
+    let res = request.send().await.ok()?;
+    if !res.status().is_success() {
+        return None;
     }
+    res.text().await.ok()
+}
 
-    // Check directory structure
-    let is_inside_skill_dir = normalized.starts_with("skills/")
-        || normalized.contains("/skills/")
-        || normalized.starts_with(".skills/")
-        || normalized.contains("/.skills/")
-        || normalized.starts_with(".agents/skills/")
-        || normalized.contains("/.agents/skills/")
-        || normalized.starts_with(".claude/skills/")
-        || normalized.contains("/.claude/skills/")
-        || normalized.starts_with(".junie/skills/")
-        || normalized.contains("/.junie/skills/");
-
-    if is_inside_skill_dir
-        && (filename.ends_with(".md")
-            || filename.ends_with(".json")
-            || filename.ends_with(".yaml")
-            || filename.ends_with(".yml"))
-    {
-        return true;
+/// Downloads a skill file: first from the raw content host (fast, no API rate limit),
+/// falling back to the GitHub Blobs API.
+async fn fetch_skill_content(
+    client: &reqwest::Client,
+    raw_url: &str,
+    blob_url: Option<&str>,
+) -> String {
+    if let Some(content) = fetch_text(client.get(raw_url)).await {
+        return content;
     }
-
-    false
+    if let Some(blob_url) = blob_url {
+        let request = client
+            .get(blob_url)
+            .header(ACCEPT, "application/vnd.github.v3.raw");
+        if let Some(content) = fetch_text(request).await {
+            return content;
+        }
+    }
+    String::new()
 }
 
 /// Scans a GitHub repository for AI agent skills, using local SQLite caching where possible.
@@ -242,6 +276,7 @@ pub async fn scan_github_repo(
                 skills,
                 from_cache: true,
                 commit_sha: cached_repo.commit_sha,
+                truncated: false,
             });
         }
     }
@@ -281,6 +316,7 @@ pub async fn scan_github_repo(
 
     let tree_data: GitTreeResponse = res.json().await?;
     let tree_sha = tree_data.sha.clone();
+    let truncated = tree_data.truncated;
     let current_sha = latest_commit_sha.or(tree_sha);
 
     let skill_entries: Vec<GitTreeItem> = tree_data
@@ -296,52 +332,49 @@ pub async fn scan_github_repo(
 
     let web_ref = resolve_web_ref(&client, base_api, &owner, &repo, branch).await;
 
-    let mut skills = Vec::new();
+    let raw_ref = current_sha.clone().unwrap_or_else(|| web_ref.clone());
 
-    for entry in skill_entries {
-        let mut content = String::new();
-
-        // 1. Try fetching via GitHub Blobs API using SHA (with auth and raw header)
-        if !entry.sha.is_empty() && options.base_api_url.is_none() {
-            let blob_url = format!(
+    // Download skill files concurrently (bounded), then restore the tree order.
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
+    let mut downloads = JoinSet::new();
+    for (idx, entry) in skill_entries.into_iter().enumerate() {
+        let client = client.clone();
+        let semaphore = Arc::clone(&semaphore);
+        let raw_url = format!("{}/{}/{}/{}/{}", base_raw, owner, repo, raw_ref, entry.path);
+        let blob_url = (!entry.sha.is_empty()).then(|| {
+            format!(
                 "{}/repos/{}/{}/git/blobs/{}",
                 base_api, owner, repo, entry.sha
-            );
-            if let Ok(blob_res) = client
-                .get(&blob_url)
-                .header(ACCEPT, "application/vnd.github.v3.raw")
-                .send()
-                .await
-            {
-                if blob_res.status().is_success() {
-                    content = blob_res.text().await.unwrap_or_default();
-                }
-            }
-        }
-
-        // 2. Fallback to raw content URL if blob API was not used or failed
-        if content.is_empty() {
-            let raw_ref = current_sha.as_deref().unwrap_or(&web_ref);
-
-            let raw_url = format!("{}/{}/{}/{}/{}", base_raw, owner, repo, raw_ref, entry.path);
-
-            if let Ok(raw_res) = client.get(&raw_url).send().await {
-                if raw_res.status().is_success() {
-                    content = raw_res.text().await.unwrap_or_default();
-                }
-            }
-        }
-
-        let metadata = parse_skill_metadata(&content, &entry.path);
-        let web_url = github_blob_url(&owner, &repo, &web_ref, &entry.path);
-
-        skills.push(Skill {
-            name: metadata.name,
-            description: metadata.description,
-            path: entry.path,
-            url: web_url,
+            )
+        });
+        downloads.spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok();
+            let content = fetch_skill_content(&client, &raw_url, blob_url.as_deref()).await;
+            (idx, entry.path, content)
         });
     }
+
+    let mut downloaded = Vec::new();
+    while let Some(joined) = downloads.join_next().await {
+        if let Ok(item) = joined {
+            downloaded.push(item);
+        }
+    }
+    downloaded.sort_by_key(|(idx, _, _)| *idx);
+
+    let mut skills: Vec<Skill> = downloaded
+        .into_iter()
+        .map(|(_, path, content)| {
+            let metadata = parse_skill_metadata(&content, &path);
+            let url = github_blob_url(&owner, &repo, &web_ref, &path);
+            Skill {
+                name: metadata.name,
+                description: metadata.description,
+                path,
+                url,
+            }
+        })
+        .collect();
 
     skills.sort_by_key(|a| a.name.to_lowercase());
 
@@ -365,5 +398,6 @@ pub async fn scan_github_repo(
         skills,
         from_cache: false,
         commit_sha: current_sha,
+        truncated,
     })
 }

@@ -58,7 +58,11 @@ JetBrains/kotlin 6 skills
    - If unchanged, retrieves the cached skills directly from SQLite without re-scanning the GitHub tree or fetching file contents.
 
 2. **Repository Scan & Metadata Extraction**:
-   - If the repository has updated or is scanned for the first time, analyzes the repository tree for skill definitions (`SKILL.md`, `skill.json`, `skill.yaml`, `.agents/skills`, `.claude/skills`, `.junie/skills`, `skills/`).
+   - If the repository has updated or is scanned for the first time, loads the whole repository tree in a single request (`git/trees/<branch>?recursive=1`, no depth limit) and selects skill definitions:
+     - Only files named `SKILL.md`, `skill.json`, `skill.yaml` or `skill.yml` (any letter case, at any depth, e.g. under `.agents/skills`, `.claude/skills`, `.junie/skills`, `skills/`) are skills. Other files inside skill folders (e.g. `references/*.md`) are supporting documents and are neither downloaded nor listed.
+     - Files inside vendored, generated or VCS folders (`.git`, `.hg`, `.svn`, `node_modules`, `.venv`, `venv`, `__pycache__`, `.tox`, `.mypy_cache`, `.pytest_cache`, `site-packages`) are ignored. Only whole folder names match (`my-venv-tools/` is not ignored).
+   - Skill files are downloaded concurrently (at most 16 at a time) from `raw.githubusercontent.com` at the scanned commit, which does not count against the GitHub API rate limit; if that fails, the GitHub Blobs API is used. Results are sorted by name.
+   - If GitHub reports the tree as truncated (very large repositories), the scan still returns the skills found and prints `⚠️  Warning: GitHub truncated the repository tree for this large repository; results may be incomplete.`; `--json` output contains `"truncated": true`.
    - Extracts and cleans metadata (skill name, first sentence of description, file path, GitHub URL) across YAML frontmatter, JSON, YAML files, and Markdown headings.
    - Saves the fresh scan results and commit SHA into the local SQLite database.
    - **GitHub URLs** have the form `https://github.com/<owner>/<repo>/blob/<ref>/<path>`. With an explicit `--branch`, `<ref>` is that branch. With the default `HEAD`, `<ref>` is the repository's default branch as reported by the GitHub API (e.g. `master` for `JetBrains/kotlin`, never an assumed `main`); if it cannot be determined, `HEAD` is used (GitHub resolves it to the default branch). URLs of cached results are rebuilt the same way when loaded, so stale links from older caches are corrected.
