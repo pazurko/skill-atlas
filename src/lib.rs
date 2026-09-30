@@ -2,6 +2,7 @@ pub mod cli;
 pub mod interactive;
 pub mod metadata;
 pub mod parser;
+pub mod repl;
 pub mod scanner;
 pub mod storage;
 

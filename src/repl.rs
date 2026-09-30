@@ -1,0 +1,434 @@
+use crate::interactive::present_skills;
+use crate::scanner::{scan_github_repo, ScanResult, ScannerOptions, Skill};
+use colored::*;
+use crossterm::{
+    cursor, execute,
+    terminal::{Clear, ClearType},
+};
+use std::io::{self, BufRead, Write};
+use std::path::Path;
+
+pub const PROMPT: &str = "skill-atlas> ";
+
+/// A single command entered at the `skill-atlas>` prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplCommand {
+    /// Blank line, nothing to do.
+    Empty,
+    /// Scan a repository (a bare `owner/repo` or URL is treated as `scan <repo>`).
+    Scan {
+        repo: String,
+        branch: Option<String>,
+        refresh: bool,
+    },
+    /// Re-scan the last scanned repository, bypassing the cache.
+    Rescan,
+    /// Show the skills of the last scan again.
+    List,
+    /// Open a skill from the last scan by number or name.
+    Open(String),
+    Help,
+    Clear,
+    Exit,
+    /// Malformed or unknown command, with the message to show to the user.
+    Invalid(String),
+}
+
+pub const SCAN_USAGE: &str = "Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh]";
+pub const OPEN_USAGE: &str = "Usage: open <number|name>";
+
+/// Parses one line typed at the prompt into a command.
+pub fn parse_command(line: &str) -> ReplCommand {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    let Some(first) = parts.first() else {
+        return ReplCommand::Empty;
+    };
+    let args = &parts[1..];
+
+    match first.to_lowercase().as_str() {
+        "exit" | "quit" | "q" => ReplCommand::Exit,
+        "help" | "?" => ReplCommand::Help,
+        "clear" | "cls" => ReplCommand::Clear,
+        "list" | "ls" => ReplCommand::List,
+        "rescan" | "refresh" => ReplCommand::Rescan,
+        "open" => {
+            if args.is_empty() {
+                ReplCommand::Invalid(OPEN_USAGE.to_string())
+            } else {
+                ReplCommand::Open(args.join(" "))
+            }
+        }
+        "scan" => parse_scan_args(args),
+        _ if looks_like_repo(first) => parse_scan_args(&parts),
+        other => ReplCommand::Invalid(format!(
+            "Unknown command: '{}'. Type 'help' for available commands.",
+            other
+        )),
+    }
+}
+
+fn looks_like_repo(token: &str) -> bool {
+    token.contains('/') || token.starts_with("git@")
+}
+
+fn parse_scan_args(args: &[&str]) -> ReplCommand {
+    let mut repo: Option<String> = None;
+    let mut branch: Option<String> = None;
+    let mut refresh = false;
+    let mut iter = args.iter();
+
+    while let Some(arg) = iter.next() {
+        match *arg {
+            "-b" | "--branch" => match iter.next() {
+                Some(value) => branch = Some(value.to_string()),
+                None => return ReplCommand::Invalid(SCAN_USAGE.to_string()),
+            },
+            "--refresh" | "--no-cache" => refresh = true,
+            flag if flag.starts_with("--branch=") => {
+                branch = Some(flag["--branch=".len()..].to_string());
+            }
+            flag if flag.starts_with('-') => {
+                return ReplCommand::Invalid(format!("Unknown option '{}'. {}", flag, SCAN_USAGE));
+            }
+            value => {
+                if repo.is_some() {
+                    return ReplCommand::Invalid(SCAN_USAGE.to_string());
+                }
+                repo = Some(value.to_string());
+            }
+        }
+    }
+
+    match repo {
+        Some(repo) => ReplCommand::Scan {
+            repo,
+            branch,
+            refresh,
+        },
+        None => ReplCommand::Invalid(SCAN_USAGE.to_string()),
+    }
+}
+
+/// Terminal side effects of the prompt session, abstracted so the loop can be tested.
+pub trait ReplUi {
+    /// Presents the skills of a scan (interactive menu in a TTY).
+    fn show_skills(
+        &mut self,
+        out: &mut dyn Write,
+        skills: &[Skill],
+        repo_name: &str,
+    ) -> io::Result<()>;
+    /// Opens a URL in the default browser.
+    fn open_url(&mut self, url: &str) -> io::Result<()>;
+    /// Clears the terminal screen.
+    fn clear_screen(&mut self, out: &mut dyn Write) -> io::Result<()>;
+}
+
+/// Real terminal UI: arrow-key menu, system browser, screen clearing.
+pub struct TerminalUi;
+
+impl ReplUi for TerminalUi {
+    fn show_skills(
+        &mut self,
+        out: &mut dyn Write,
+        skills: &[Skill],
+        repo_name: &str,
+    ) -> io::Result<()> {
+        out.flush()?;
+        present_skills(skills, Some(repo_name), false)?;
+        Ok(())
+    }
+
+    fn open_url(&mut self, url: &str) -> io::Result<()> {
+        open::that(url)
+    }
+
+    fn clear_screen(&mut self, out: &mut dyn Write) -> io::Result<()> {
+        let mut stdout = io::stdout();
+        out.flush()?;
+        execute!(stdout, Clear(ClearType::All), cursor::MoveTo(0, 0))
+    }
+}
+
+/// State kept across commands in one prompt session.
+#[derive(Debug, Clone, Default)]
+pub struct ReplSession {
+    /// Base scanner options (token, default branch, cache settings, db path).
+    pub options: ScannerOptions,
+    /// Repository input of the last successful scan.
+    pub last_repo: Option<String>,
+    /// Branch override used by the last successful scan.
+    pub last_branch: Option<String>,
+    /// `owner/repo` of the last successful scan.
+    pub repo_name: Option<String>,
+    /// Skills of the last successful scan.
+    pub skills: Vec<Skill>,
+}
+
+impl ReplSession {
+    pub fn new(options: ScannerOptions) -> Self {
+        Self {
+            options,
+            ..Default::default()
+        }
+    }
+
+    /// Scans a repository, reports errors without aborting, and presents results.
+    pub async fn scan<W: Write, U: ReplUi>(
+        &mut self,
+        out: &mut W,
+        ui: &mut U,
+        repo: &str,
+        branch: Option<String>,
+        refresh: bool,
+    ) -> io::Result<()> {
+        writeln!(
+            out,
+            "{}",
+            format!(
+                "\n🔍 Scanning repository {} for agent skills...",
+                repo.bold()
+            )
+            .cyan()
+        )?;
+        out.flush()?;
+
+        let mut options = self.options.clone();
+        if branch.is_some() {
+            options.branch = branch.clone();
+        }
+        options.no_cache = options.no_cache || refresh;
+
+        match scan_github_repo(repo, &options).await {
+            Ok(result) => {
+                if let Some(msg) = cache_message(&result) {
+                    writeln!(out, "{}", msg.green())?;
+                }
+                let repo_name = format!("{}/{}", result.owner, result.repo);
+                self.last_repo = Some(repo.to_string());
+                self.last_branch = branch;
+                self.repo_name = Some(repo_name.clone());
+                self.skills = result.skills;
+
+                if self.skills.is_empty() {
+                    writeln!(
+                        out,
+                        "{}",
+                        format!("\nNo agent skills found in {}.\n", repo_name.bold()).yellow()
+                    )?;
+                } else {
+                    ui.show_skills(out, &self.skills, &repo_name)?;
+                    writeln!(
+                        out,
+                        "{}",
+                        "Type 'open <number|name>', 'list', 'scan <githubrepo>', 'rescan' or 'help'."
+                            .dimmed()
+                    )?;
+                }
+            }
+            Err(err) => {
+                writeln!(out, "{}", format!("\n❌ Error: {}\n", err).red())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn find_skill(&self, query: &str) -> Result<&Skill, String> {
+        if self.skills.is_empty() {
+            return Err(
+                "No skills listed yet in this session. Run 'scan <githubrepo>' first.".to_string(),
+            );
+        }
+        let query = query.trim();
+        if let Ok(idx) = query.parse::<usize>() {
+            return if (1..=self.skills.len()).contains(&idx) {
+                Ok(&self.skills[idx - 1])
+            } else {
+                Err(format!(
+                    "Invalid index. Please choose between 1 and {}.",
+                    self.skills.len()
+                ))
+            };
+        }
+        let lower = query.to_lowercase();
+        self.skills
+            .iter()
+            .find(|s| s.name.to_lowercase() == lower)
+            .or_else(|| {
+                self.skills
+                    .iter()
+                    .find(|s| s.name.to_lowercase().contains(&lower))
+            })
+            .ok_or_else(|| format!("Skill matching '{}' not found in recent results.", query))
+    }
+
+    /// Executes one command. Returns `false` when the session should end.
+    pub async fn execute<W: Write, U: ReplUi>(
+        &mut self,
+        out: &mut W,
+        ui: &mut U,
+        command: ReplCommand,
+    ) -> io::Result<bool> {
+        match command {
+            ReplCommand::Empty => {}
+            ReplCommand::Exit => {
+                writeln!(out, "{}", "Goodbye!".yellow())?;
+                return Ok(false);
+            }
+            ReplCommand::Help => write_help(out)?,
+            ReplCommand::Clear => ui.clear_screen(out)?,
+            ReplCommand::Invalid(msg) => writeln!(out, "{}", msg.yellow())?,
+            ReplCommand::Scan {
+                repo,
+                branch,
+                refresh,
+            } => self.scan(out, ui, &repo, branch, refresh).await?,
+            ReplCommand::Rescan => match self.last_repo.clone() {
+                Some(repo) => {
+                    let branch = self.last_branch.clone();
+                    self.scan(out, ui, &repo, branch, true).await?;
+                }
+                None => writeln!(
+                    out,
+                    "{}",
+                    "Nothing to rescan yet. Run 'scan <githubrepo>' first.".yellow()
+                )?,
+            },
+            ReplCommand::List => {
+                if self.skills.is_empty() {
+                    writeln!(
+                        out,
+                        "{}",
+                        "No skills listed yet in this session. Run 'scan <githubrepo>' first."
+                            .yellow()
+                    )?;
+                } else {
+                    let repo_name = self.repo_name.clone().unwrap_or_default();
+                    let skills = self.skills.clone();
+                    ui.show_skills(out, &skills, &repo_name)?;
+                }
+            }
+            ReplCommand::Open(query) => match self.find_skill(&query) {
+                Ok(skill) => {
+                    let skill = skill.clone();
+                    writeln!(
+                        out,
+                        "{} Opening {} in browser: {}",
+                        "⚡".green(),
+                        skill.name.bold(),
+                        skill.url.blue()
+                    )?;
+                    if let Err(e) = ui.open_url(&skill.url) {
+                        writeln!(out, "{} Failed to open browser: {}", "❌".red(), e)?;
+                    }
+                }
+                Err(msg) => writeln!(out, "{}", msg.yellow())?,
+            },
+        }
+        Ok(true)
+    }
+}
+
+/// Runs the `skill-atlas>` prompt loop until `exit`/`quit` or end of input.
+pub async fn run_repl<R: BufRead, W: Write, U: ReplUi>(
+    input: &mut R,
+    out: &mut W,
+    ui: &mut U,
+    session: &mut ReplSession,
+) -> io::Result<()> {
+    loop {
+        write!(out, "{}", PROMPT.bold())?;
+        out.flush()?;
+
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            writeln!(out, "{}", "\nGoodbye!".yellow())?;
+            return Ok(());
+        }
+
+        if !session.execute(out, ui, parse_command(&line)).await? {
+            return Ok(());
+        }
+    }
+}
+
+/// Writes the welcome banner shown when the prompt session starts.
+pub fn write_welcome<W: Write>(out: &mut W) -> io::Result<()> {
+    writeln!(out, "{}", "\n⚡ Welcome to Skill Atlas!".bold().cyan())?;
+    writeln!(
+        out,
+        "Type 'scan <githubrepo>' (e.g. scan https://github.com/JetBrains/kotlin), 'help' for commands, or 'exit' to quit.\n"
+    )
+}
+
+pub fn write_help<W: Write>(out: &mut W) -> io::Result<()> {
+    writeln!(out, "\n{}", "Available commands:".bold())?;
+    let rows = [
+        (
+            "scan <githubrepo> [-b <BRANCH>] [--refresh]",
+            "Scan a GitHub repository (a bare owner/repo or URL works too)",
+        ),
+        ("rescan", "Re-scan the last repository, bypassing the cache"),
+        ("list", "Show the skills of the last scan again"),
+        (
+            "open <number|name>",
+            "Open a skill from the last scan in your browser",
+        ),
+        ("help", "Show this help"),
+        ("clear", "Clear the terminal screen"),
+        ("exit, quit, q", "Exit Skill Atlas"),
+    ];
+    for (cmd, desc) in rows {
+        writeln!(out, "  {:<46} {}", cmd.cyan(), desc)?;
+    }
+    writeln!(out)
+}
+
+/// Message shown when results were loaded from the SQLite cache.
+pub fn cache_message(result: &ScanResult) -> Option<String> {
+    if !result.from_cache {
+        return None;
+    }
+    let commit_info = result
+        .commit_sha
+        .as_deref()
+        .map(|sha| {
+            let short_sha = if sha.len() >= 7 { &sha[..7] } else { sha };
+            format!(" (commit {})", short_sha)
+        })
+        .unwrap_or_default();
+    Some(format!(
+        "📦 Repository unchanged since last scan{}. Loaded results from local SQLite database.\n",
+        commit_info
+    ))
+}
+
+/// Plain numbered list of skills (used by non-TTY presenters and tests).
+pub fn write_skill_list<W: Write + ?Sized>(
+    out: &mut W,
+    skills: &[Skill],
+    repo_name: &str,
+) -> io::Result<()> {
+    writeln!(
+        out,
+        "\n{} {}\n",
+        repo_name.bold(),
+        format!("({} skills)", skills.len()).green()
+    )?;
+    for (idx, skill) in skills.iter().enumerate() {
+        let filename = Path::new(&skill.path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("SKILL.md");
+        writeln!(
+            out,
+            " [{}] › {} [{}]\n     {}\n     {}",
+            idx + 1,
+            skill.name.bold().cyan(),
+            format!("{} ↗", filename).dimmed(),
+            skill.description,
+            format!("🔗 {}", skill.url).blue()
+        )?;
+    }
+    writeln!(out)
+}

@@ -15,6 +15,50 @@ pub enum InteractiveResult {
     Exited,
 }
 
+/// Action resulting from a single key press inside the interactive skills menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuAction {
+    /// Move the selection cursor to the given index.
+    Move(usize),
+    /// Open the skill at the given index in the browser (the menu stays open).
+    Open(usize),
+    /// Leave the menu and return to the caller (e.g. the `skill-atlas>` prompt).
+    Back,
+    /// Key has no effect.
+    Ignore,
+}
+
+/// Maps a key press to a menu action. Pure function so the navigation logic is testable.
+pub fn handle_menu_key(
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    selected_idx: usize,
+    len: usize,
+) -> MenuAction {
+    if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
+        return MenuAction::Back;
+    }
+    if len == 0 {
+        return match code {
+            KeyCode::Char('q') | KeyCode::Esc => MenuAction::Back,
+            _ => MenuAction::Ignore,
+        };
+    }
+    match code {
+        KeyCode::Char('q') | KeyCode::Esc => MenuAction::Back,
+        KeyCode::Up | KeyCode::Char('k') => {
+            if selected_idx == 0 || selected_idx >= len {
+                MenuAction::Move(len - 1)
+            } else {
+                MenuAction::Move(selected_idx - 1)
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => MenuAction::Move((selected_idx + 1) % len),
+        KeyCode::Enter => MenuAction::Open(selected_idx.min(len - 1)),
+        _ => MenuAction::Ignore,
+    }
+}
+
 /// Presents the discovered skills interactively or prints them in non-interactive mode.
 pub fn present_skills(
     skills: &[Skill],
@@ -67,36 +111,46 @@ fn run_interactive_loop(
     let mut stdout = io::stdout();
     let mut selected_idx = 0;
 
+    let mut status: Option<String> = None;
+
     let res = (|| -> io::Result<InteractiveResult> {
         loop {
-            render_menu(&mut stdout, skills, repo_name, selected_idx)?;
+            render_menu(
+                &mut stdout,
+                skills,
+                repo_name,
+                selected_idx,
+                status.as_deref(),
+            )?;
 
             if let Event::Key(key_event) = event::read()? {
-                if key_event.modifiers.contains(KeyModifiers::CONTROL)
-                    && key_event.code == KeyCode::Char('c')
-                {
-                    return Ok(InteractiveResult::Exited);
+                if key_event.kind != event::KeyEventKind::Press {
+                    continue;
                 }
-
-                match key_event.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        return Ok(InteractiveResult::Exited);
+                match handle_menu_key(
+                    key_event.code,
+                    key_event.modifiers,
+                    selected_idx,
+                    skills.len(),
+                ) {
+                    MenuAction::Back => return Ok(InteractiveResult::Exited),
+                    MenuAction::Move(idx) => {
+                        selected_idx = idx;
+                        status = None;
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if selected_idx == 0 {
-                            selected_idx = skills.len() - 1;
-                        } else {
-                            selected_idx -= 1;
-                        }
+                    MenuAction::Open(idx) => {
+                        let skill = &skills[idx];
+                        status = Some(match open::that(&skill.url) {
+                            Ok(()) => format!(
+                                "{} Opened {} in browser: {}",
+                                "⚡".green(),
+                                skill.name.bold(),
+                                skill.url.blue()
+                            ),
+                            Err(e) => format!("{} Failed to open browser: {}", "❌".red(), e),
+                        });
                     }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        selected_idx = (selected_idx + 1) % skills.len();
-                    }
-                    KeyCode::Enter => {
-                        let selected_skill = skills[selected_idx].clone();
-                        return Ok(InteractiveResult::Opened(selected_skill));
-                    }
-                    _ => {}
+                    MenuAction::Ignore => {}
                 }
             }
         }
@@ -104,26 +158,9 @@ fn run_interactive_loop(
 
     let _ = disable_raw_mode();
     let _ = execute!(stdout, cursor::Show);
+    println!();
 
-    match res {
-        Ok(InteractiveResult::Opened(skill)) => {
-            println!(
-                "\n{} Opening {} in browser: {}",
-                "⚡".green(),
-                skill.name.bold(),
-                skill.url.blue()
-            );
-            if let Err(e) = open::that(&skill.url) {
-                eprintln!("{} Failed to open browser: {}", "❌".red(), e);
-            }
-            Ok(InteractiveResult::Opened(skill))
-        }
-        Ok(InteractiveResult::Exited) => {
-            println!("{}", "\nExiting Skill Atlas.".yellow());
-            Ok(InteractiveResult::Exited)
-        }
-        Err(e) => Err(e),
-    }
+    res
 }
 
 fn render_menu<W: Write>(
@@ -131,6 +168,7 @@ fn render_menu<W: Write>(
     skills: &[Skill],
     repo_name: Option<&str>,
     selected_idx: usize,
+    status: Option<&str>,
 ) -> io::Result<()> {
     execute!(out, Clear(ClearType::All), cursor::MoveTo(0, 0))?;
 
@@ -223,8 +261,12 @@ fn render_menu<W: Write>(
     writeln!(
         out,
         "{}\r",
-        "↑/↓ navigate • Enter open in GitHub • q quit".dimmed()
+        "↑/↓ navigate • Enter open in GitHub • q back to prompt".dimmed()
     )?;
+
+    if let Some(status) = status {
+        writeln!(out, "\r\n{}\r", status)?;
+    }
 
     out.flush()?;
     Ok(())
