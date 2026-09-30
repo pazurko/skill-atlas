@@ -18,6 +18,7 @@ Skill Atlas is a high-performance interactive CLI built in Rust designed to scan
   - Skills sharing a name (e.g. one in `.claude/skills` and one shipped in a plugin) are all listed, with their full path shown so you can tell them apart.
   - `q` / `Esc` / `Ctrl+C`: Leave the menu and return to the `skill-atlas>` prompt.
 - **Persistent Interactive Session**: The CLI does not stop after one scan. From the `skill-atlas>` prompt you can scan other repositories, re-scan, list and open skills again, until you type `exit`.
+- **Localhost Web Interface**: Launch an intuitive web UI via `skill-atlas web` or `web` inside the prompt to scan repositories, search/filter skills live, view cached history, and open definitions in your browser.
 - **Flexible Repository Inputs**: Accepts `owner/repo`, full HTTPS URLs (`https://github.com/owner/repo`), and SSH URLs (`git@github.com:...`).
 - **Non-Interactive & JSON Support**: Provides clean terminal output in non-TTY environments and a `--json` flag for scripting and CI pipelines.
 
@@ -56,6 +57,16 @@ skill-atlas scan <githubrepo>
 
 # Or launch the interactive session
 skill-atlas
+```
+
+### Launch Web Interface
+
+```bash
+# Start localhost web interface and open in browser
+skill-atlas web
+
+# Customize host and port
+skill-atlas web --host 127.0.0.1 --port 8080 --no-open
 ```
 
 In a terminal, both forms end in a persistent `skill-atlas>` prompt (with `--json` or non-TTY output, `scan` stays one-shot):

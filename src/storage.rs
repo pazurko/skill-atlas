@@ -1,10 +1,11 @@
 use crate::scanner::Skill;
 use chrono::Utc;
 use rusqlite::{params, Connection, Result};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedRepo {
     pub id: i64,
     pub owner: String,

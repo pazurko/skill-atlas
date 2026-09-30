@@ -21,6 +21,12 @@ Welcome! This document defines the instructions, workflows, and standards for AI
    - Write integration tests in the `tests/` directory for **every case defined in the specs**.
    - Ensure positive cases, negative cases, boundary cases, and edge cases (e.g., rate limits, missing repositories, non-interactive mode) are thoroughly tested.
 5. **Run Local Validation**: Run tests locally with `cargo test` and verify that all test suites pass with zero warnings or errors.
+6. **Branch, Commit & Pull Request**:
+   - Create a dedicated feature branch for the changes.
+   - Commit changes cleanly and include co-authorship metadata when required.
+   - Push the branch to the remote repository and open a pull request.
+7. **Remote CI Validation**:
+   - Verify that all remote CI checks and tests pass completely green on the remote runners.
 
 ---
 

@@ -29,6 +29,11 @@ pub enum ReplCommand {
     Open(String),
     /// Show every skill opened in this session (audit trail).
     History,
+    /// Launch localhost web interface.
+    Web {
+        port: Option<u16>,
+        no_open: bool,
+    },
     Help,
     Clear,
     Exit,
@@ -38,6 +43,7 @@ pub enum ReplCommand {
 
 pub const SCAN_USAGE: &str = "Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh]";
 pub const OPEN_USAGE: &str = "Usage: open <number|name>";
+pub const WEB_USAGE: &str = "Usage: web [--port <PORT>] [--no-open]";
 
 /// Parses one line typed at the prompt into a command.
 pub fn parse_command(line: &str) -> ReplCommand {
@@ -54,6 +60,7 @@ pub fn parse_command(line: &str) -> ReplCommand {
         "list" | "ls" => ReplCommand::List,
         "rescan" | "refresh" => ReplCommand::Rescan,
         "history" | "opened" => ReplCommand::History,
+        "web" | "serve" => parse_web_args(args),
         "open" => {
             if args.is_empty() {
                 ReplCommand::Invalid(OPEN_USAGE.to_string())
@@ -68,6 +75,34 @@ pub fn parse_command(line: &str) -> ReplCommand {
             other
         )),
     }
+}
+
+fn parse_web_args(args: &[&str]) -> ReplCommand {
+    let mut port: Option<u16> = None;
+    let mut no_open = false;
+    let mut iter = args.iter();
+
+    while let Some(arg) = iter.next() {
+        match *arg {
+            "-p" | "--port" => match iter.next() {
+                Some(val) => match val.parse::<u16>() {
+                    Ok(p) => port = Some(p),
+                    Err(_) => {
+                        return ReplCommand::Invalid(
+                            "Invalid port number. Usage: web [--port <PORT>] [--no-open]"
+                                .to_string(),
+                        )
+                    }
+                },
+                None => return ReplCommand::Invalid(WEB_USAGE.to_string()),
+            },
+            "--no-open" => no_open = true,
+            "--open" => no_open = false,
+            _ => return ReplCommand::Invalid(WEB_USAGE.to_string()),
+        }
+    }
+
+    ReplCommand::Web { port, no_open }
 }
 
 fn looks_like_repo(token: &str) -> bool {
@@ -319,6 +354,18 @@ impl ReplSession {
                 }
             }
             ReplCommand::History => self.history.write_all(out)?,
+            ReplCommand::Web { port, no_open } => {
+                let port = port.unwrap_or(3000);
+                let web_opts = crate::web::WebOptions {
+                    host: "127.0.0.1".to_string(),
+                    port,
+                    open_browser: !no_open,
+                    scanner_options: self.options.clone(),
+                };
+                if let Err(e) = crate::web::start_web_server(web_opts).await {
+                    writeln!(out, "{} Failed to start web server: {}", "❌".red(), e)?;
+                }
+            }
             ReplCommand::Open(query) => match self.find_skill(&query) {
                 Ok(skill) => {
                     let skill = skill.clone();
@@ -408,6 +455,10 @@ pub fn write_help<W: Write>(out: &mut W) -> io::Result<()> {
         (
             "history",
             "Show every skill opened in this session (audit trail)",
+        ),
+        (
+            "web [--port <PORT>] [--no-open]",
+            "Start localhost web interface to scan and view skills",
         ),
         ("help", "Show this help"),
         ("clear", "Clear the terminal screen"),
