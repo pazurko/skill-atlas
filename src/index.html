@@ -387,11 +387,110 @@
       display: flex;
       gap: 1rem;
       align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .filter-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .format-chips {
+      display: flex;
+      gap: 0.35rem;
+    }
+
+    .format-chip {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      background: #21262d;
+      color: var(--text-muted);
+      border: 1px solid var(--card-border);
+      cursor: pointer;
+      font-family: var(--font-mono);
+      transition: all 0.15s;
+    }
+
+    .format-chip:hover {
+      background: #30363d;
+      color: var(--text);
+    }
+
+    .format-chip.active {
+      background: rgba(88, 166, 255, 0.2);
+      color: var(--accent);
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    .similarity-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: rgba(210, 153, 34, 0.2);
+      color: #e3b341;
+      border: 1px solid rgba(210, 153, 34, 0.4);
+    }
+
+    .similarity-badge.high-match {
+      background: rgba(63, 185, 80, 0.2);
+      color: #3fb950;
+      border-color: rgba(63, 185, 80, 0.4);
+    }
+
+    .similar-active-banner {
+      background: rgba(88, 166, 255, 0.1);
+      border: 1px solid rgba(88, 166, 255, 0.3);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      font-size: 0.85rem;
+    }
+
+    .similar-pairs-panel {
+      background: #161b22;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      display: none;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .pair-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      background: #0d1117;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      font-size: 0.825rem;
+    }
+
+    .pair-skills {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--font-mono);
     }
 
     .search-input-wrapper {
       position: relative;
       flex: 1;
+      min-width: 240px;
     }
 
     .search-input-wrapper input {
@@ -658,8 +757,26 @@
             <span class="search-icon">🔎</span>
             <input type="text" id="filter-input" placeholder="Filter skills by name, description, or path..." oninput="handleFilter(event)">
           </div>
+          <div class="filter-controls">
+            <div class="format-chips">
+              <span id="chip-all" class="format-chip active" onclick="setFormatFilter('all')">All Formats</span>
+              <span id="chip-md" class="format-chip" onclick="setFormatFilter('md')">SKILL.md</span>
+              <span id="chip-yaml" class="format-chip" onclick="setFormatFilter('yaml')">YAML</span>
+              <span id="chip-json" class="format-chip" onclick="setFormatFilter('json')">JSON</span>
+            </div>
+            <button id="detect-similar-btn" class="btn-sm" onclick="toggleSimilarPairs()" title="Detect similar and duplicate skills across the repository">
+              ⚡ Similar Pairs (<span id="similar-pairs-count">0</span>)
+            </button>
+          </div>
           <span id="filter-status" style="font-size: 0.825rem; color: var(--text-muted); white-space: nowrap;"></span>
         </div>
+
+        <div id="similar-banner" class="similar-active-banner" style="display: none;">
+          <div>⚡ Showing skills similar to <strong id="similar-target-name" style="color: var(--accent);"></strong> <span id="similar-match-count" style="color: var(--text-muted); font-size: 0.8rem;"></span></div>
+          <button class="btn-sm" onclick="clearSimilarFilter()">Clear Similarity Filter</button>
+        </div>
+
+        <div id="similar-pairs-panel" class="similar-pairs-panel"></div>
 
         <div id="skills-list" class="skills-grid"></div>
       </div>
@@ -673,6 +790,123 @@
   <script>
     let currentSkills = [];
     let duplicateNames = new Set();
+    let activeFormatFilter = 'all';
+    let activeSimilarTarget = null;
+    let detectedPairs = [];
+
+    const STOP_WORDS = new Set([
+      "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
+      "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but",
+      "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for",
+      "from", "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself",
+      "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "just",
+      "me", "more", "most", "my", "myself", "no", "nor", "not", "now", "of", "off", "on", "once",
+      "only", "or", "other", "our", "ours", "ourselves", "out", "over", "own", "same", "she",
+      "should", "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves",
+      "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "until",
+      "up", "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom",
+      "why", "with", "would", "you", "your", "yours", "yourself", "yourselves"
+    ]);
+
+    function tokenize(text, filterStopWords) {
+      if (!text) return new Set();
+      const tokens = new Set();
+      const words = text.toLowerCase().split(/[^a-z0-9]+/);
+      for (const w of words) {
+        if (!w) continue;
+        if (filterStopWords && (STOP_WORDS.has(w) || w.length <= 1)) continue;
+        tokens.add(w);
+      }
+      return tokens;
+    }
+
+    function jaccard(setA, setB) {
+      if (setA.size === 0 && setB.size === 0) return 0.0;
+      let intersect = 0;
+      for (const item of setA) {
+        if (setB.has(item)) intersect++;
+      }
+      const union = setA.size + setB.size - intersect;
+      return union === 0 ? 0.0 : intersect / union;
+    }
+
+    function diceBigrams(s1, s2) {
+      const clean1 = (s1 || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const clean2 = (s2 || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (clean1 === clean2) return clean1.length === 0 ? 0.0 : 1.0;
+      if (clean1.length < 2 || clean2.length < 2) return 0.0;
+      const bg1 = [];
+      for (let i = 0; i < clean1.length - 1; i++) bg1.push(clean1.slice(i, i + 2));
+      const bg2 = [];
+      for (let i = 0; i < clean2.length - 1; i++) bg2.push(clean2.slice(i, i + 2));
+      let matches = 0;
+      const used = new Array(bg2.length).fill(false);
+      for (const b1 of bg1) {
+        for (let j = 0; j < bg2.length; j++) {
+          if (!used[j] && b1 === bg2[j]) {
+            matches++;
+            used[j] = true;
+            break;
+          }
+        }
+      }
+      return (2.0 * matches) / (bg1.length + bg2.length);
+    }
+
+    function calculateSimilarity(a, b) {
+      const aName = (a.name || '').trim().toLowerCase();
+      const bName = (b.name || '').trim().toLowerCase();
+      if (aName === bName) {
+        const aDesc = (a.description || '').trim().toLowerCase();
+        const bDesc = (b.description || '').trim().toLowerCase();
+        if (aDesc === bDesc) return 100.0;
+        const tokA = tokenize(a.description, true);
+        const tokB = tokenize(b.description, true);
+        const descSim = jaccard(tokA, tokB);
+        return Math.min(100.0, 90.0 + (descSim * 10.0));
+      }
+      const nameTokA = tokenize(a.name, false);
+      const nameTokB = tokenize(b.name, false);
+      const nameJ = jaccard(nameTokA, nameTokB);
+      const nameD = diceBigrams(a.name, b.name);
+      const nameSim = Math.max(nameJ, nameD);
+
+      const descTokA = tokenize(a.description, true);
+      const descTokB = tokenize(b.description, true);
+      const descSim = jaccard(descTokA, descTokB);
+
+      const pathTokA = tokenize(a.path, false);
+      const pathTokB = tokenize(b.path, false);
+      const pathSim = jaccard(pathTokA, pathTokB);
+
+      let raw = 0.0;
+      if (descTokA.size > 0 && descTokB.size > 0) {
+        raw = (0.50 * nameSim) + (0.40 * descSim) + (0.10 * pathSim);
+      } else {
+        raw = (0.80 * nameSim) + (0.20 * pathSim);
+      }
+      return Math.round(Math.max(0, Math.min(100, raw * 100)) * 10) / 10;
+    }
+
+    function computeSimilarPairs(skills) {
+      const pairs = [];
+      for (let i = 0; i < skills.length; i++) {
+        for (let j = i + 1; j < skills.length; j++) {
+          const sim = calculateSimilarity(skills[i], skills[j]);
+          if (sim >= 30.0) {
+            pairs.push({
+              indexA: i + 1,
+              indexB: j + 1,
+              skillA: skills[i],
+              skillB: skills[j],
+              similarity: sim
+            });
+          }
+        }
+      }
+      pairs.sort((a, b) => b.similarity - a.similarity);
+      return pairs;
+    }
 
     function fillRepo(name) {
       document.getElementById('repo-input').value = name;
@@ -814,12 +1048,141 @@
 
       currentSkills = data.skills;
       duplicateNames = computeDuplicateNames(currentSkills);
+      detectedPairs = computeSimilarPairs(currentSkills);
+      document.getElementById('similar-pairs-count').textContent = detectedPairs.length;
+      renderSimilarPairsPanel();
 
-      document.getElementById('filter-input').value = '';
-      renderSkillsList(currentSkills);
+      activeFormatFilter = 'all';
+      updateFormatChipUI();
+      activeSimilarTarget = null;
+      document.getElementById('similar-banner').style.display = 'none';
+      document.getElementById('similar-pairs-panel').style.display = 'none';
+
+      applyAllFilters();
     }
 
-    function renderSkillsList(skills) {
+    function renderSimilarPairsPanel() {
+      const panel = document.getElementById('similar-pairs-panel');
+      if (detectedPairs.length === 0) {
+        panel.innerHTML = '<div style="font-size: 0.85rem; color: var(--text-muted); text-align: center; padding: 0.5rem;">No similar skill pairs detected (threshold: >= 30%).</div>';
+        return;
+      }
+      panel.innerHTML = `
+        <div style="font-weight: 600; font-size: 0.85rem; color: var(--text);">⚡ Detected Similar Skills & Duplicate Pairs (${detectedPairs.length})</div>
+        <div style="display: flex; flex-direction: column; gap: 0.4rem; max-height: 240px; overflow-y: auto;">
+          ${detectedPairs.map(p => `
+            <div class="pair-row">
+              <div class="pair-skills">
+                <span style="color: var(--accent); font-weight: 600;">[${p.indexA}] ${escapeHtml(p.skillA.name)}</span>
+                <span style="color: var(--text-muted);">↔</span>
+                <span style="color: var(--accent); font-weight: 600;">[${p.indexB}] ${escapeHtml(p.skillB.name)}</span>
+              </div>
+              <span class="similarity-badge ${p.similarity >= 80 ? 'high-match' : ''}">⚡ ${Math.round(p.similarity)}% similar</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function toggleSimilarPairs() {
+      const panel = document.getElementById('similar-pairs-panel');
+      if (panel.style.display === 'flex') {
+        panel.style.display = 'none';
+      } else {
+        panel.style.display = 'flex';
+      }
+    }
+
+    function setFormatFilter(fmt) {
+      activeFormatFilter = fmt;
+      updateFormatChipUI();
+      applyAllFilters();
+    }
+
+    function updateFormatChipUI() {
+      ['all', 'md', 'yaml', 'json'].forEach(fmt => {
+        const chip = document.getElementById('chip-' + fmt);
+        if (chip) {
+          if (fmt === activeFormatFilter) {
+            chip.classList.add('active');
+          } else {
+            chip.classList.remove('active');
+          }
+        }
+      });
+    }
+
+    function showSimilarFor(skillName) {
+      const target = currentSkills.find(s => s.name.toLowerCase() === skillName.toLowerCase());
+      if (!target) return;
+      activeSimilarTarget = target;
+      document.getElementById('similar-target-name').textContent = target.name;
+      document.getElementById('similar-banner').style.display = 'flex';
+      applyAllFilters();
+    }
+
+    function clearSimilarFilter() {
+      activeSimilarTarget = null;
+      document.getElementById('similar-banner').style.display = 'none';
+      applyAllFilters();
+    }
+
+    function handleFilter() {
+      applyAllFilters();
+    }
+
+    function applyAllFilters() {
+      const query = (document.getElementById('filter-input').value || '').toLowerCase().trim();
+
+      let list = currentSkills.slice();
+
+      // If similarity target is set
+      let similarityScores = new Map();
+      if (activeSimilarTarget) {
+        list = list.filter(s => !(s.path === activeSimilarTarget.path && s.name === activeSimilarTarget.name));
+        const scoredList = [];
+        for (const s of list) {
+          const sim = calculateSimilarity(activeSimilarTarget, s);
+          if (sim >= 20.0) {
+            similarityScores.set(s, sim);
+            scoredList.push({ skill: s, similarity: sim });
+          }
+        }
+        scoredList.sort((a, b) => b.similarity - a.similarity);
+        list = scoredList.map(item => item.skill);
+        document.getElementById('similar-match-count').textContent = `(${list.length} matches >= 20%)`;
+      }
+
+      // Format filter
+      if (activeFormatFilter !== 'all') {
+        list = list.filter(s => {
+          const pathLower = s.path.toLowerCase();
+          if (activeFormatFilter === 'md') return pathLower.endsWith('.md');
+          if (activeFormatFilter === 'yaml') return pathLower.endsWith('.yaml') || pathLower.endsWith('.yml');
+          if (activeFormatFilter === 'json') return pathLower.endsWith('.json');
+          return true;
+        });
+      }
+
+      // Keyword query
+      if (query) {
+        const terms = query.split(/\s+/);
+        list = list.filter(s => {
+          const nameLower = s.name.toLowerCase();
+          const descLower = s.description.toLowerCase();
+          const pathLower = s.path.toLowerCase();
+          return terms.every(term =>
+            nameLower.includes(term) ||
+            descLower.includes(term) ||
+            pathLower.includes(term)
+          );
+        });
+      }
+
+      renderSkillsList(list, similarityScores);
+    }
+
+    function renderSkillsList(skills, similarityScores) {
       const list = document.getElementById('skills-list');
       const filterStatus = document.getElementById('filter-status');
 
@@ -832,7 +1195,7 @@
       if (skills.length === 0) {
         list.innerHTML = `
           <div style="text-align: center; padding: 3rem 1rem; color: var(--text-muted); background: var(--card-bg); border-radius: 8px;">
-            No agent skills matched your filter.
+            No agent skills matched your filter criteria.
           </div>
         `;
         return;
@@ -841,13 +1204,18 @@
       list.innerHTML = skills.map((skill, idx) => {
         const isDuplicate = duplicateNames.has(skill.name.toLowerCase());
         const badgeLabel = isDuplicate ? skill.path : (skill.path.split('/').pop() || skill.path);
+        const simScore = similarityScores ? similarityScores.get(skill) : null;
+        const simBadgeHtml = simScore != null
+          ? `<span class="similarity-badge ${simScore >= 80 ? 'high-match' : ''}">⚡ ${Math.round(simScore)}% match</span>`
+          : '';
 
         return `
           <div class="skill-card">
             <div class="skill-header">
-              <div style="display: flex; align-items: center;">
+              <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                 <span class="skill-index">[${idx + 1}]</span>
                 <span class="skill-title">${escapeHtml(skill.name)}</span>
+                ${simBadgeHtml}
               </div>
               <a href="${escapeHtml(skill.url)}" target="_blank" class="skill-file-badge">
                 ${escapeHtml(badgeLabel)} ↗
@@ -860,6 +1228,7 @@
               <span class="skill-path" title="${escapeHtml(skill.path)}">📁 ${escapeHtml(skill.path)}</span>
               <div class="skill-actions">
                 <button class="btn-sm" onclick="copyText('${escapeHtml(skill.path)}')">Copy Path</button>
+                <button class="btn-sm" onclick="showSimilarFor('${escapeHtml(skill.name)}')" title="Find skills similar to this definition">⚡ Similar</button>
                 <a href="${escapeHtml(skill.url)}" target="_blank" class="btn-sm btn-sm-primary">
                   Open in GitHub ↗
                 </a>
@@ -868,22 +1237,6 @@
           </div>
         `;
       }).join('');
-    }
-
-    function handleFilter(event) {
-      const query = event.target.value.toLowerCase().trim();
-      if (!query) {
-        renderSkillsList(currentSkills);
-        return;
-      }
-
-      const filtered = currentSkills.filter(s =>
-        s.name.toLowerCase().includes(query) ||
-        s.description.toLowerCase().includes(query) ||
-        s.path.toLowerCase().includes(query)
-      );
-
-      renderSkillsList(filtered);
     }
 
     function copyText(text) {
@@ -909,6 +1262,9 @@
         document.getElementById('repo-input').value = repoParam;
         if (params.get('branch')) {
           document.getElementById('branch-input').value = params.get('branch');
+        }
+        if (params.get('filter') || params.get('q')) {
+          document.getElementById('filter-input').value = params.get('filter') || params.get('q');
         }
         document.getElementById('scan-form').dispatchEvent(new Event('submit'));
       }

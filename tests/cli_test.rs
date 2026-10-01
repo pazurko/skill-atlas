@@ -15,6 +15,9 @@ fn test_cli_parse_scan_basic() {
             json,
             no_cache,
             db_path,
+            filter,
+            similar,
+            min_similarity,
         }) => {
             assert_eq!(githubrepo, Some("openai/swarm".to_string()));
             assert_eq!(token, None);
@@ -22,6 +25,9 @@ fn test_cli_parse_scan_basic() {
             assert!(!json);
             assert!(!no_cache);
             assert_eq!(db_path, None);
+            assert_eq!(filter, None);
+            assert!(!similar);
+            assert_eq!(min_similarity, None);
         }
         _ => panic!("Expected Scan command"),
     }
@@ -52,6 +58,9 @@ fn test_cli_parse_scan_with_flags() {
             json,
             no_cache,
             db_path,
+            filter,
+            similar,
+            min_similarity,
         }) => {
             assert_eq!(
                 githubrepo,
@@ -62,6 +71,40 @@ fn test_cli_parse_scan_with_flags() {
             assert!(json);
             assert!(no_cache);
             assert_eq!(db_path, Some(PathBuf::from("/tmp/custom_skills.db")));
+            assert_eq!(filter, None);
+            assert!(!similar);
+            assert_eq!(min_similarity, None);
+        }
+        _ => panic!("Expected Scan command"),
+    }
+}
+
+#[test]
+fn test_cli_parse_scan_with_filter_and_similar() {
+    let args = vec![
+        "skill-atlas",
+        "scan",
+        "JetBrains/kotlin",
+        "--filter",
+        "gradle",
+        "--similar",
+        "--min-similarity",
+        "40.5",
+    ];
+    let cli = Cli::try_parse_from(args).unwrap();
+
+    match cli.command {
+        Some(Commands::Scan {
+            githubrepo,
+            filter,
+            similar,
+            min_similarity,
+            ..
+        }) => {
+            assert_eq!(githubrepo, Some("JetBrains/kotlin".to_string()));
+            assert_eq!(filter, Some("gradle".to_string()));
+            assert!(similar);
+            assert_eq!(min_similarity, Some(40.5));
         }
         _ => panic!("Expected Scan command"),
     }

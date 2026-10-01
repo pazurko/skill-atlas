@@ -203,7 +203,8 @@ fn test_parse_scan_variants() {
         ReplCommand::Scan {
             repo: "acme/skills".into(),
             branch: None,
-            refresh: false
+            refresh: false,
+            filter: None,
         }
     );
     assert_eq!(
@@ -211,15 +212,17 @@ fn test_parse_scan_variants() {
         ReplCommand::Scan {
             repo: "https://github.com/acme/skills".into(),
             branch: Some("dev".into()),
-            refresh: true
+            refresh: true,
+            filter: None,
         }
     );
     assert_eq!(
-        parse_command("scan --branch=main acme/skills --no-cache"),
+        parse_command("scan --branch=main acme/skills --no-cache -f review"),
         ReplCommand::Scan {
             repo: "acme/skills".into(),
             branch: Some("main".into()),
-            refresh: true
+            refresh: true,
+            filter: Some("review".into()),
         }
     );
     // Bare repository input is treated as a scan
@@ -228,7 +231,8 @@ fn test_parse_scan_variants() {
         ReplCommand::Scan {
             repo: "https://github.com/acme/skills".into(),
             branch: None,
-            refresh: false
+            refresh: false,
+            filter: None,
         }
     );
     assert_eq!(
@@ -236,8 +240,32 @@ fn test_parse_scan_variants() {
         ReplCommand::Scan {
             repo: "git@github.com:acme/skills.git".into(),
             branch: None,
-            refresh: false
+            refresh: false,
+            filter: None,
         }
+    );
+}
+
+#[test]
+fn test_parse_filter_and_similar_commands() {
+    assert_eq!(parse_command("filter"), ReplCommand::Filter(None));
+    assert_eq!(parse_command("f"), ReplCommand::Filter(None));
+    assert_eq!(
+        parse_command("filter code review"),
+        ReplCommand::Filter(Some("code review".to_string()))
+    );
+    assert_eq!(
+        parse_command("f deploy"),
+        ReplCommand::Filter(Some("deploy".to_string()))
+    );
+    assert_eq!(parse_command("similar"), ReplCommand::Similar(None));
+    assert_eq!(
+        parse_command("similar 1"),
+        ReplCommand::Similar(Some("1".to_string()))
+    );
+    assert_eq!(
+        parse_command("similar code-review"),
+        ReplCommand::Similar(Some("code-review".to_string()))
     );
 }
 
@@ -621,5 +649,86 @@ async fn test_open_by_name_warns_about_duplicate_names() {
     );
     assert_eq!(ui.opened.len(), 2);
     assert!(ui.opened[1].ends_with("skills/review-b/SKILL.md"));
+    let _ = std::fs::remove_file(db);
+}
+
+#[tokio::test]
+async fn test_session_filter_command() {
+    let server = MockServer::start().await;
+    mount_repo(
+        &server,
+        "acme",
+        "filter-test",
+        "sha_f",
+        &[
+            ("build-gradle", "build-gradle"),
+            ("code-review", "code-review"),
+            ("deploy-app", "deploy-app"),
+        ],
+    )
+    .await;
+    let (options, db) = options_for(&server, "filter_session");
+
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi::default();
+    let out = run_script(
+        &mut session,
+        &mut ui,
+        "filter\nscan acme/filter-test\nfilter review\nlist\nfilter nomatch\nfilter clear\nexit\n",
+    )
+    .await;
+
+    // Filter before scanning
+    assert!(out.contains("No skills listed yet in this session. Run 'scan <githubrepo>' first."));
+
+    // Filter review matches 1 skill
+    assert!(out.contains("acme/filter-test (filtered: 1 of 3)"));
+
+    // Filter nomatch
+    assert!(out.contains("No skills matched filter 'nomatch' (0 of 3 skills)."));
+
+    // Filter cleared
+    assert!(out.contains("Filter cleared. Showing all skills."));
+
+    let _ = std::fs::remove_file(db);
+}
+
+#[tokio::test]
+async fn test_session_similar_command() {
+    let server = MockServer::start().await;
+    mount_repo(
+        &server,
+        "acme",
+        "similar-test",
+        "sha_s",
+        &[
+            ("code-review-1", "code-review"),
+            ("deploy-prod", "deploy-prod"),
+            ("code-review-2", "code-review"),
+        ],
+    )
+    .await;
+    let (options, db) = options_for(&server, "similar_session");
+
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi::default();
+    let out = run_script(
+        &mut session,
+        &mut ui,
+        "similar\nscan acme/similar-test\nsimilar\nsimilar 1\nsimilar 2\nexit\n",
+    )
+    .await;
+
+    // Similar before scanning
+    assert!(out.contains("No skills listed yet in this session. Run 'scan <githubrepo>' first."));
+
+    // Similar across repo finds the code-review duplicate pair
+    assert!(out.contains("Similar skills in acme/similar-test (threshold: >= 30%):"));
+    assert!(out.contains("[1] code-review <-> [2] code-review (100% similar)"));
+
+    // Similar to skill [1] finds skill [2]
+    assert!(out.contains("Skills similar to 'code-review' (threshold: >= 30%):"));
+    assert!(out.contains("[2] › code-review (100% similar)"));
+
     let _ = std::fs::remove_file(db);
 }

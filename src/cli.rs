@@ -19,7 +19,7 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
-#[derive(Subcommand, Debug, PartialEq, Eq)]
+#[derive(Subcommand, Debug, PartialEq)]
 pub enum Commands {
     /// Scan target GitHub repository for AI agent skills
     Scan {
@@ -45,6 +45,18 @@ pub enum Commands {
         /// Custom path to SQLite database for caching
         #[arg(long)]
         db_path: Option<PathBuf>,
+
+        /// Filter scanned skills by query across name, description, or path
+        #[arg(short, long)]
+        filter: Option<String>,
+
+        /// Highlight and report similar skills found in the repository
+        #[arg(long)]
+        similar: bool,
+
+        /// Minimum similarity percentage threshold for detection (default: 30.0)
+        #[arg(long)]
+        min_similarity: Option<f64>,
     },
 
     /// Start localhost web interface for scanning and viewing skills
@@ -127,12 +139,25 @@ pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             json,
             no_cache,
             db_path,
+            filter,
+            similar,
+            min_similarity,
         }) if !repo.trim().is_empty() => {
             if !json && is_tty() {
                 let options = scanner_options(token, branch, no_cache, db_path);
-                run_session(Some(repo.trim()), options).await
+                run_session(Some(repo.trim()), options, filter).await
             } else {
-                scan_and_present(&repo, token, branch, json, no_cache, db_path).await
+                let cli_opts = ScanCliOptions {
+                    token,
+                    branch,
+                    json,
+                    no_cache,
+                    db_path,
+                    filter,
+                    similar,
+                    min_similarity,
+                };
+                scan_and_present(&repo, cli_opts).await
             }
         }
         Some(Commands::Scan {
@@ -142,9 +167,12 @@ pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             json: _,
             no_cache,
             db_path,
+            filter,
+            similar: _,
+            min_similarity: _,
         }) => {
             if is_tty() {
-                run_session(None, scanner_options(token, branch, no_cache, db_path)).await
+                run_session(None, scanner_options(token, branch, no_cache, db_path), filter).await
             } else {
                 print_usage();
                 Ok(())
@@ -152,7 +180,7 @@ pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         None => {
             if is_tty() {
-                run_session(None, ScannerOptions::default()).await
+                run_session(None, ScannerOptions::default(), None).await
             } else {
                 print_usage();
                 Ok(())
@@ -193,6 +221,7 @@ fn scanner_options(
 async fn run_session(
     initial_repo: Option<&str>,
     options: ScannerOptions,
+    filter: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut out = io::stdout();
     let mut ui = TerminalUi;
@@ -200,7 +229,7 @@ async fn run_session(
 
     write_welcome(&mut out)?;
     if let Some(repo) = initial_repo {
-        session.scan(&mut out, &mut ui, repo, None, false).await?;
+        session.scan(&mut out, &mut ui, repo, None, false, filter).await?;
     }
     out.flush()?;
 
@@ -209,15 +238,23 @@ async fn run_session(
     Ok(())
 }
 
-async fn scan_and_present(
-    githubrepo: &str,
+#[derive(Debug, Clone, Default)]
+struct ScanCliOptions {
     token: Option<String>,
     branch: Option<String>,
     json: bool,
     no_cache: bool,
     db_path: Option<PathBuf>,
+    filter: Option<String>,
+    similar: bool,
+    min_similarity: Option<f64>,
+}
+
+async fn scan_and_present(
+    githubrepo: &str,
+    opts: ScanCliOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !json {
+    if !opts.json {
         println!(
             "{}",
             format!(
@@ -229,17 +266,21 @@ async fn scan_and_present(
     }
 
     let options = ScannerOptions {
-        token,
-        branch,
+        token: opts.token,
+        branch: opts.branch,
         base_api_url: None,
         base_raw_url: None,
-        no_cache,
-        db_path,
+        no_cache: opts.no_cache,
+        db_path: opts.db_path,
     };
 
     match scan_github_repo(githubrepo, &options).await {
-        Ok(result) => {
-            if json {
+        Ok(mut result) => {
+            if let Some(f) = &opts.filter {
+                result.skills = crate::similarity::filter_skills(&result.skills, f);
+            }
+
+            if opts.json {
                 let json_str = serde_json::to_string_pretty(&result)?;
                 println!("{}", json_str);
                 return Ok(());
@@ -264,7 +305,40 @@ async fn scan_and_present(
                 return Ok(());
             }
 
-            let repo_name = format!("{}/{}", result.owner, result.repo);
+            let threshold = opts
+                .min_similarity
+                .unwrap_or(crate::similarity::DEFAULT_SIMILARITY_THRESHOLD);
+            if opts.similar {
+                let pairs = crate::similarity::find_all_similar_pairs(&result.skills, threshold);
+                if !pairs.is_empty() {
+                    println!(
+                        "\n{}",
+                        format!(
+                            "Similar skills detected (threshold: >= {:.0}%):",
+                            threshold
+                        )
+                        .bold()
+                    );
+                    for p in &pairs {
+                        println!(
+                            " • [{}] {} <-> [{}] {} ({:.0}% similar)",
+                            p.index_a,
+                            p.skill_a.name.cyan(),
+                            p.index_b,
+                            p.skill_b.name.cyan(),
+                            p.similarity
+                        );
+                    }
+                    println!();
+                }
+            }
+
+            let repo_name = if let Some(f) = &opts.filter {
+                format!("{}/{} (filtered by '{}')", result.owner, result.repo, f)
+            } else {
+                format!("{}/{}", result.owner, result.repo)
+            };
+
             present_skills(
                 &result.skills,
                 Some(&repo_name),

@@ -23,6 +23,8 @@ pub enum MenuAction {
     Move(usize),
     /// Open the skill at the given index in the browser (the menu stays open).
     Open(usize),
+    /// Show similarity information for the skill at the given index.
+    Similar(usize),
     /// Leave the menu and return to the caller (e.g. the `skill-atlas>` prompt).
     Back,
     /// Key has no effect.
@@ -56,6 +58,7 @@ pub fn handle_menu_key(
         }
         KeyCode::Down | KeyCode::Char('j') => MenuAction::Move((selected_idx + 1) % len),
         KeyCode::Enter => MenuAction::Open(selected_idx.min(len - 1)),
+        KeyCode::Char('s') | KeyCode::Char('S') => MenuAction::Similar(selected_idx.min(len - 1)),
         _ => MenuAction::Ignore,
     }
 }
@@ -85,6 +88,27 @@ impl MenuState {
         match action {
             MenuAction::Back => return false,
             MenuAction::Move(idx) => self.selected_idx = idx,
+            MenuAction::Similar(idx) => {
+                let Some(skill) = skills.get(idx) else {
+                    return true;
+                };
+                let matches = crate::similarity::find_similar_skills(skill, skills, 20.0);
+                self.status = Some(if let Some(top) = matches.first() {
+                    format!(
+                        "{} Most similar to {}: [{}] {} ({:.0}% similar)",
+                        "⚡".cyan(),
+                        skill.name.bold(),
+                        top.index,
+                        top.skill.name.bold(),
+                        top.similarity
+                    )
+                } else {
+                    format!(
+                        "ℹ No similar skills found for {} (threshold: >= 20%)",
+                        skill.name.bold()
+                    )
+                });
+            }
             MenuAction::Open(idx) => {
                 let Some(skill) = skills.get(idx) else {
                     return true;
@@ -319,7 +343,7 @@ pub fn render_menu<W: Write>(
     writeln!(
         out,
         "{}\r",
-        "↑/↓ navigate • Enter open in GitHub • q back to prompt".dimmed()
+        "↑/↓ navigate • Enter open in GitHub • s similar • q back to prompt".dimmed()
     )?;
 
     if let Some(status) = &state.status {

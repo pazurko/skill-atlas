@@ -20,6 +20,9 @@ skill-atlas
 - `<githubrepo>`: Target repository identifier or URL (e.g., `owner/repo`, `https://github.com/owner/repo`, or `git@github.com:...`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed to stderr.
 - `-t, --token <TOKEN>`: GitHub personal access token to prevent API rate limiting. If omitted, `GITHUB_TOKEN` (then `GH_TOKEN`) from the environment is used. At startup, `KEY=VALUE` lines from a `.env` file in the current directory, and then from the nearest `.env` in the executable's directory or its ancestors (e.g. the project root for `target/release/skill-atlas`, so a binary started from Finder or another directory still finds it), are loaded into the environment (blank lines and `#` comments skipped, `export ` prefix and quotes stripped); variables already set in the environment are never overridden, and a missing `.env` is ignored. Without a token GitHub allows only 60 API requests per hour per IP.
 - `-b, --branch <BRANCH>`: Target Git branch or ref (default: `HEAD`).
+- `-f, --filter <QUERY>`: Filter scanned skills by keyword query matching in name, description, or file path.
+- `--similar`: Highlight and report similar skills and duplicate definitions detected across the repository.
+- `--min-similarity <PERCENT>`: Minimum percentage similarity threshold for detection (default: `30.0`).
 - `--json`: Output raw JSON scan results instead of interactive menu.
 - `--no-cache` (alias: `--refresh`): Bypass local SQLite cache and re-scan GitHub directly.
 - `--db-path <PATH>`: Custom SQLite database path (default: `~/.skill-atlas/skills.db`).
@@ -60,7 +63,7 @@ JetBrains/kotlin 6 skills
  [ 6] › minimize-repro-for-diagnostic-test                                         SKILL.md ↗
       Makes a minimal reproduction of a Frontend-related bug as a diagnostic test...
 
-↑/↓ navigate • Enter open in GitHub • q back to prompt
+↑/↓ navigate • Enter open in GitHub • s similar • q back to prompt
 ```
 
 ## Workflow & Behavior
@@ -88,6 +91,7 @@ JetBrains/kotlin 6 skills
      - `↑` / `↓` (or `k` / `j`): Move selection cursor between identified skills.
    - **Action**:
      - `Enter`: Open the selected skill's GitHub definition in the default web browser. The menu stays open and shows a status line, so several skills can be opened in a row. The status line is kept while navigating (it only changes on the next open).
+     - `s` / `S`: Show similarity information and the most similar counterpart skill with similarity percentage for the currently selected skill.
    - **Opened history (audit)**: every open attempt (from the menu or `open`) is recorded for the whole session, across repositories, with local time (`HH:MM:SS`), `owner/repo`, skill name and URL; failed browser launches are recorded as `✗ ... (failed: <error>)`. Skills opened successfully are marked `✓ opened` in the menu, and the menu shows the 5 most recent entries below the key hints under `Opened in this session (N, 'history' at the prompt shows all):`. A one-shot `scan` outside a session keeps the history only while the menu is open.
      - `q` / `Esc` / `Ctrl+C`: Leave the menu and return to the `skill-atlas>` prompt.
 
@@ -102,9 +106,11 @@ JetBrains/kotlin 6 skills
 
      | Command | Behavior |
      | --- | --- |
-     | `scan <githubrepo> [-b\|--branch <BRANCH>] [--refresh\|--no-cache]` | Scan a repository and show the interactive menu. A bare repository (contains `/` or starts with `git@`) is treated as `scan <repo>`. Missing repository, a missing branch value, extra repositories or unknown options print `Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh]`. |
+     | `scan <githubrepo> [-b\|--branch <BRANCH>] [--refresh\|--no-cache] [-f\|--filter <QUERY>]` | Scan a repository and show the interactive menu. A bare repository (contains `/` or starts with `git@`) is treated as `scan <repo>`. Missing repository, a missing branch value, extra repositories or unknown options print `Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh] [--filter <QUERY>]`. |
      | `rescan` / `refresh` | Re-scan the last successfully scanned repository (same branch), bypassing the cache. Without a previous scan: `Nothing to rescan yet. Run 'scan <githubrepo>' first.` |
-     | `list` / `ls` | Show the skills of the last scan again in the menu. |
+     | `list` / `ls` | Show the skills of the last scan again in the menu (respecting any active filter). |
+     | `filter [query\|clear]` / `f` | Filter current scan results across name, description, or path. Running without arguments or `filter clear` resets the filter. |
+     | `similar [<number\|name>]` | Find and report similar skills based on heuristics and similarity percentages (threshold >= 30%). Without arguments, lists all detected similar pairs. With a skill index or name, lists all skills similar to that target. |
      | `open <number\|name>` | Open a skill of the last scan in the browser: 1-based index, else exact case-insensitive name, else first name containing the query. When the matched name is shared by several skills, the first (by path) is opened and `Note: <n> skills are named '<name>'; opened <path>. Use 'open <number>' to pick another.` is printed. Out-of-range index: `Invalid index. Please choose between 1 and N.`; no match: `Skill matching '<query>' not found in recent results.`; no argument: `Usage: open <number\|name>`. |
      | `history` / `opened` | List every skill opened in this session, oldest first, under `Opened in this session (N):`. Empty: `Nothing opened yet in this session.` |
      | `web` / `serve` | Start the localhost web interface and open it in the default browser (`web [--port <PORT>] [--no-open]`). |
@@ -113,7 +119,7 @@ JetBrains/kotlin 6 skills
      | `exit` / `quit` / `q` | Print `Goodbye!` and exit. End of input (`Ctrl+D`) also exits. |
 
    - Empty lines are ignored; any other input prints `Unknown command: '<cmd>'. Type 'help' for available commands.`
-   - `list` and `open` before any skills were found print `No skills listed yet in this session. Run 'scan <githubrepo>' first.`
+   - `list`, `filter`, `similar`, and `open` before any skills were found print `No skills listed yet in this session. Run 'scan <githubrepo>' first.`
    - Scan errors (not found, rate limit, invalid identifier, network) are printed as `❌ Error: ...` and the session continues; the results of the previous successful scan are kept.
    - A repository with no skills prints `No agent skills found in <owner/repo>.` and clears the previous results.
    - A failure to launch the browser is reported (`Failed to open browser: ...`) without ending the session.
@@ -126,11 +132,17 @@ JetBrains/kotlin 6 skills
      - **Repository Scan Form**: Input fields for repository identifier / URL (`owner/repo`, `https://github.com/...`, `git@github.com:...`), branch ref, optional GitHub token, and cache bypass toggle.
      - **Results View**: Displays repository badges, total skills count, branch, commit SHA, and cache state indicators (`📦 SQLite Cache` vs `⚡ Fresh Scan`).
      - **Real-time Filter**: Instant search filter by skill name, description, or file path with item counter.
-     - **Skill Cards**: Numbered cards displaying skill name, file badge (`SKILL.md ↗`, `skill.yaml ↗`, or disambiguated full path), clean description, copyable path, and direct link to open the definition on GitHub.
+     - **Format Filter Chips**: Quick filtering by file type (`All Formats`, `SKILL.md`, `YAML`, `JSON`).
+     - **Similarity Explorer**:
+       - `⚡ Similar Pairs` panel showing all detected duplicate and similar skills with similarity percentage badges.
+       - Per-card `⚡ Similar` button to focus on skills similar to a specific skill with percentage match badges.
+     - **Skill Cards**: Numbered cards displaying skill name, file badge (`SKILL.md ↗`, `skill.yaml ↗`, or disambiguated full path), clean description, copyable path, similarity badge (when active), and direct link to open the definition on GitHub.
      - **Cached History Sidebar**: Lists previously scanned repositories with quick-click reloading from local SQLite cache.
    - **REST API Endpoints**:
      - `GET /`: Serves the embedded HTML/CSS/JavaScript web interface.
-     - `POST /api/scan`: Executes scan for repository specified in JSON payload `{"repo": "owner/repo", "branch": "HEAD", "refresh": false, "token": "..."}`.
-     - `GET /api/scan?repo=...&branch=...&refresh=...`: Executes scan via query parameters.
+     - `POST /api/scan`: Executes scan for repository specified in JSON payload `{"repo": "owner/repo", "branch": "HEAD", "refresh": false, "token": "...", "filter": "..."}`.
+     - `GET /api/scan?repo=...&branch=...&refresh=...&filter=...`: Executes scan via query parameters.
+     - `POST /api/similar`: Returns similar pairs and target skill matches for repository specified in JSON payload `{"repo": "owner/repo", "target": "...", "min_similarity": 30.0}`.
+     - `GET /api/similar?repo=...&target=...&min_similarity=...`: Returns similarity analysis via query parameters.
      - `GET /api/cached`: Returns JSON list of cached repositories.
      - `GET /api/health`: Returns health status and application version.

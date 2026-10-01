@@ -291,3 +291,120 @@ async fn test_web_api_scan_errors() {
 
     let _ = std::fs::remove_file(db_path);
 }
+
+#[tokio::test]
+async fn test_web_api_scan_with_filter_and_similar() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/skills-hub"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "default_branch": "main"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/skills-hub/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "sha_web_sim"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/skills-hub/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "tree_sim",
+            "tree": [
+                { "path": "skills/review-a/SKILL.md", "type": "blob", "sha": "blob1" },
+                { "path": "skills/deploy/skill.yaml", "type": "blob", "sha": "blob2" },
+                { "path": "skills/review-b/SKILL.md", "type": "blob", "sha": "blob3" }
+            ]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/acme/skills-hub/sha_web_sim/skills/review-a/SKILL.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "---\nname: code-review\ndescription: Automated code review.\n---\n",
+        ))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/acme/skills-hub/sha_web_sim/skills/deploy/skill.yaml"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "name: deploy-prod\ndescription: Production deployment.\n",
+        ))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/acme/skills-hub/sha_web_sim/skills/review-b/SKILL.md"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "---\nname: code-review\ndescription: Automated code review.\n---\n",
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let db_path = std::env::temp_dir().join(format!("web_test_sim_{}.db", rand_nanos()));
+    let options = ScannerOptions {
+        base_api_url: Some(mock_server.uri()),
+        base_raw_url: Some(mock_server.uri()),
+        db_path: Some(db_path.clone()),
+        ..Default::default()
+    };
+
+    let (base_url, _) = spawn_test_app(options).await;
+    let client = reqwest::Client::new();
+
+    // 1. Scan with filter parameter
+    let filter_res = client
+        .post(format!("{}/api/scan", base_url))
+        .json(&json!({
+            "repo": "acme/skills-hub",
+            "filter": "deploy"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(filter_res.status(), reqwest::StatusCode::OK);
+    let filter_result: ScanResult = filter_res.json().await.unwrap();
+    assert_eq!(filter_result.skills.len(), 1);
+    assert_eq!(filter_result.skills[0].name, "deploy-prod");
+
+    // 2. GET /api/similar endpoint
+    let similar_res = client
+        .get(format!("{}/api/similar?repo=acme/skills-hub", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(similar_res.status(), reqwest::StatusCode::OK);
+    let similar_data: skill_atlas::web::SimilarResponse = similar_res.json().await.unwrap();
+    assert_eq!(similar_data.pairs.len(), 1);
+    assert_eq!(similar_data.pairs[0].skill_a.name, "code-review");
+    assert_eq!(similar_data.pairs[0].skill_b.name, "code-review");
+    assert_eq!(similar_data.pairs[0].similarity, 100.0);
+
+    // 3. POST /api/similar with target
+    let target_res = client
+        .post(format!("{}/api/similar", base_url))
+        .json(&json!({
+            "repo": "acme/skills-hub",
+            "target": "code-review"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(target_res.status(), reqwest::StatusCode::OK);
+    let target_data: skill_atlas::web::SimilarResponse = target_res.json().await.unwrap();
+    assert_eq!(target_data.target_matches.len(), 1);
+    assert_eq!(target_data.target_matches[0].skill.name, "code-review");
+
+    let _ = std::fs::remove_file(db_path);
+}
