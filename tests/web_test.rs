@@ -55,10 +55,77 @@ async fn test_web_index_html_served() {
 
     let body = res.text().await.unwrap();
     assert!(body.contains("Skill Atlas"));
-    assert!(body.contains("AI Agent Skills Explorer"));
-    assert!(body.contains("Scan Repository"));
-    assert!(body.contains("id=\"repo-input\""));
-    assert!(body.contains("id=\"filter-input\""));
+    assert!(body.contains("SKILL.md"));
+    assert!(body.contains("id=\"target\""));
+    assert!(body.contains("id=\"filter\""));
+    assert!(body.contains("id=\"peek-modal\""));
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn test_web_api_skills_endpoint() {
+    let db_path = std::env::temp_dir().join(format!("web_test_skills_{}.db", rand_nanos()));
+    let mut conn = open_db(Some(&db_path)).unwrap();
+
+    let skill1 = Skill {
+        name: "code-review".to_string(),
+        description: "Automated code review assistant.".to_string(),
+        path: "skills/code-review/SKILL.md".to_string(),
+        url: "https://github.com/acme/agent-tools/blob/main/skills/code-review/SKILL.md"
+            .to_string(),
+    };
+    let skill2 = Skill {
+        name: "test-runner".to_string(),
+        description: "Executes test suites and collects logs.".to_string(),
+        path: "skills/test-runner/SKILL.md".to_string(),
+        url: "https://github.com/acme/agent-tools/blob/main/skills/test-runner/SKILL.md"
+            .to_string(),
+    };
+
+    save_cached_repository(
+        &mut conn,
+        "acme",
+        "agent-tools",
+        "main",
+        Some("commit_sha_12345"),
+        None,
+        &[skill1, skill2],
+    )
+    .unwrap();
+
+    let options = ScannerOptions {
+        db_path: Some(db_path.clone()),
+        ..Default::default()
+    };
+
+    let (base_url, _) = spawn_test_app(options).await;
+    let client = reqwest::Client::new();
+
+    // 1. All skills
+    let res = client
+        .get(format!("{}/api/skills", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+
+    let skills_resp: skill_atlas::web::SkillsResponse = res.json().await.unwrap();
+    assert_eq!(skills_resp.total, 2);
+    assert_eq!(skills_resp.skills.len(), 2);
+
+    // 2. Filtered query
+    let res_filter = client
+        .get(format!("{}/api/skills?q=review", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res_filter.status(), reqwest::StatusCode::OK);
+
+    let filtered_resp: skill_atlas::web::SkillsResponse = res_filter.json().await.unwrap();
+    assert_eq!(filtered_resp.total, 2);
+    assert_eq!(filtered_resp.skills.len(), 1);
+    assert_eq!(filtered_resp.skills[0].name, "code-review");
 
     let _ = std::fs::remove_file(db_path);
 }

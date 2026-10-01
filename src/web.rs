@@ -40,7 +40,9 @@ pub struct AppState {
 
 #[derive(Debug, Deserialize)]
 pub struct ScanPayload {
-    pub repo: String,
+    pub repo: Option<String>,
+    pub target: Option<String>,
+    pub targets: Option<Vec<String>>,
     pub branch: Option<String>,
     pub no_cache: Option<bool>,
     pub refresh: Option<bool>,
@@ -49,13 +51,26 @@ pub struct ScanPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SkillsQuery {
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsResponse {
+    pub skills: Vec<crate::scanner::Skill>,
+    pub total: usize,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SimilarPayload {
-    pub repo: String,
+    pub repo: Option<String>,
     pub branch: Option<String>,
     pub no_cache: Option<bool>,
     pub refresh: Option<bool>,
     pub token: Option<String>,
     pub target: Option<String>,
+    pub name: Option<String>,
+    pub path: Option<String>,
     pub min_similarity: Option<f64>,
 }
 
@@ -84,6 +99,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/", get(index_handler))
         .route("/api/health", get(health_handler))
         .route("/api/cached", get(cached_repos_handler))
+        .route("/api/skills", get(skills_handler))
         .route("/api/scan", post(scan_post_handler).get(scan_get_handler))
         .route(
             "/api/similar",
@@ -145,12 +161,61 @@ async fn cached_repos_handler(
     Ok(Json(repos))
 }
 
+async fn skills_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SkillsQuery>,
+) -> Result<Json<SkillsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db_path = state.default_options.db_path.as_deref();
+    let conn = open_db(db_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to open database: {}", e),
+            }),
+        )
+    })?;
+
+    let mut skills = crate::storage::get_all_cached_skills(&conn).unwrap_or_default();
+    let total = skills.len();
+    if let Some(q) = query.q {
+        if !q.trim().is_empty() {
+            skills = crate::similarity::filter_skills(&skills, &q);
+        }
+    }
+
+    Ok(Json(SkillsResponse { skills, total }))
+}
+
 async fn execute_scan(
     payload: ScanPayload,
     state: &AppState,
 ) -> Result<ScanResult, (StatusCode, String)> {
-    let repo = payload.repo.trim();
-    if repo.is_empty() {
+    let raw_targets: Vec<String> = if let Some(targets) = payload.targets {
+        targets
+            .into_iter()
+            .flat_map(|t| {
+                t.split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    } else if let Some(target) = payload.target {
+        target
+            .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else if let Some(repo) = payload.repo {
+        repo.split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    if raw_targets.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             "Repository identifier cannot be empty".to_string(),
@@ -181,92 +246,172 @@ async fn execute_scan(
         db_path: state.default_options.db_path.clone(),
     };
 
-    let mut scan_result = scan_github_repo(repo, &scan_opts).await.map_err(|err| {
-        let status = match err {
-            crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
-            crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
-            crate::scanner::ScannerError::Forbidden(_, _, _) => StatusCode::FORBIDDEN,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-        (status, err.to_string())
-    })?;
+    if raw_targets.len() == 1 {
+        let repo = &raw_targets[0];
+        let mut scan_result = scan_github_repo(repo, &scan_opts).await.map_err(|err| {
+            let status = match err {
+                crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
+                crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
+                crate::scanner::ScannerError::Forbidden(_, _, _) => StatusCode::FORBIDDEN,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, err.to_string())
+        })?;
 
-    if let Some(f) = payload.filter {
-        if !f.trim().is_empty() {
-            scan_result.skills = crate::similarity::filter_skills(&scan_result.skills, &f);
+        if let Some(f) = payload.filter {
+            if !f.trim().is_empty() {
+                scan_result.skills = crate::similarity::filter_skills(&scan_result.skills, &f);
+            }
         }
-    }
 
-    Ok(scan_result)
+        Ok(scan_result)
+    } else {
+        let mut all_skills = Vec::new();
+        let mut last_owner = String::new();
+        let mut last_repo = String::new();
+        let mut last_branch = "HEAD".to_string();
+        let mut any_from_cache = true;
+        let mut any_truncated = false;
+
+        for repo in &raw_targets {
+            match scan_github_repo(repo, &scan_opts).await {
+                Ok(mut res) => {
+                    last_owner = res.owner;
+                    last_repo = res.repo;
+                    last_branch = res.branch;
+                    if !res.from_cache {
+                        any_from_cache = false;
+                    }
+                    if res.truncated {
+                        any_truncated = true;
+                    }
+                    all_skills.append(&mut res.skills);
+                }
+                Err(err) => {
+                    if raw_targets.len() == 1 {
+                        let status = match err {
+                            crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
+                            crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
+                            crate::scanner::ScannerError::Forbidden(_, _, _) => {
+                                StatusCode::FORBIDDEN
+                            }
+                            _ => StatusCode::INTERNAL_SERVER_ERROR,
+                        };
+                        return Err((status, err.to_string()));
+                    }
+                }
+            }
+        }
+
+        if let Some(f) = payload.filter {
+            if !f.trim().is_empty() {
+                all_skills = crate::similarity::filter_skills(&all_skills, &f);
+            }
+        }
+
+        Ok(ScanResult {
+            owner: if raw_targets.len() == 1 {
+                last_owner
+            } else {
+                "multiple".to_string()
+            },
+            repo: if raw_targets.len() == 1 {
+                last_repo
+            } else {
+                "repositories".to_string()
+            },
+            branch: last_branch,
+            commit_sha: None,
+            skills: all_skills,
+            from_cache: any_from_cache,
+            truncated: any_truncated,
+        })
+    }
 }
 
 async fn execute_similar(
     payload: SimilarPayload,
     state: &AppState,
 ) -> Result<SimilarResponse, (StatusCode, String)> {
-    let repo = payload.repo.trim();
-    if repo.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Repository identifier cannot be empty".to_string(),
-        ));
-    }
+    let repo_opt = payload.repo.as_deref().filter(|r| !r.trim().is_empty());
 
-    let no_cache = payload
-        .no_cache
-        .or(payload.refresh)
-        .unwrap_or(state.default_options.no_cache);
+    let (skills, repo_label, branch_label) = if let Some(repo) = repo_opt {
+        let no_cache = payload
+            .no_cache
+            .or(payload.refresh)
+            .unwrap_or(state.default_options.no_cache);
 
-    let branch = payload
-        .branch
-        .filter(|b| !b.trim().is_empty())
-        .or_else(|| state.default_options.branch.clone());
+        let branch = payload
+            .branch
+            .filter(|b| !b.trim().is_empty())
+            .or_else(|| state.default_options.branch.clone());
 
-    let token = payload
-        .token
-        .filter(|t| !t.trim().is_empty())
-        .or_else(|| state.default_options.token.clone());
+        let token = payload
+            .token
+            .filter(|t| !t.trim().is_empty())
+            .or_else(|| state.default_options.token.clone());
 
-    let scan_opts = ScannerOptions {
-        token,
-        branch,
-        base_api_url: state.default_options.base_api_url.clone(),
-        base_raw_url: state.default_options.base_raw_url.clone(),
-        no_cache,
-        db_path: state.default_options.db_path.clone(),
-    };
-
-    let scan_result = scan_github_repo(repo, &scan_opts).await.map_err(|err| {
-        let status = match err {
-            crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
-            crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
-            crate::scanner::ScannerError::Forbidden(_, _, _) => StatusCode::FORBIDDEN,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        let scan_opts = ScannerOptions {
+            token,
+            branch,
+            base_api_url: state.default_options.base_api_url.clone(),
+            base_raw_url: state.default_options.base_raw_url.clone(),
+            no_cache,
+            db_path: state.default_options.db_path.clone(),
         };
-        (status, err.to_string())
-    })?;
+
+        let scan_result = scan_github_repo(repo, &scan_opts).await.map_err(|err| {
+            let status = match err {
+                crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
+                crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
+                crate::scanner::ScannerError::Forbidden(_, _, _) => StatusCode::FORBIDDEN,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, err.to_string())
+        })?;
+
+        (
+            scan_result.skills,
+            format!("{}/{}", scan_result.owner, scan_result.repo),
+            scan_result.branch,
+        )
+    } else {
+        let db_path = state.default_options.db_path.as_deref();
+        let conn = open_db(db_path).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to open DB: {}", e),
+            )
+        })?;
+        let all_skills = crate::storage::get_all_cached_skills(&conn).unwrap_or_default();
+        (all_skills, "all-cached".to_string(), "HEAD".to_string())
+    };
 
     let threshold = payload
         .min_similarity
         .unwrap_or(DEFAULT_SIMILARITY_THRESHOLD);
-    let pairs = find_all_similar_pairs(&scan_result.skills, threshold);
+    let pairs = find_all_similar_pairs(&skills, threshold);
 
-    let target_matches = if let Some(target_query) = payload.target.filter(|t| !t.trim().is_empty())
-    {
-        let lower = target_query.trim().to_lowercase();
-        let target_skill = scan_result
-            .skills
+    let target_query = payload
+        .target
+        .or(payload.name)
+        .or(payload.path)
+        .filter(|t| !t.trim().is_empty());
+
+    let target_matches = if let Some(query) = target_query {
+        let lower = query.trim().to_lowercase();
+        let target_skill = skills
             .iter()
             .find(|s| s.name.to_lowercase() == lower)
+            .or_else(|| skills.iter().find(|s| s.path.to_lowercase() == lower))
             .or_else(|| {
-                scan_result
-                    .skills
+                skills
                     .iter()
                     .find(|s| s.name.to_lowercase().contains(&lower))
             });
 
         if let Some(target) = target_skill {
-            find_similar_skills(target, &scan_result.skills, threshold)
+            find_similar_skills(target, &skills, threshold)
         } else {
             Vec::new()
         }
@@ -275,8 +420,8 @@ async fn execute_similar(
     };
 
     Ok(SimilarResponse {
-        repo: format!("{}/{}", scan_result.owner, scan_result.repo),
-        branch: scan_result.branch,
+        repo: repo_label,
+        branch: branch_label,
         threshold,
         pairs,
         target_matches,
