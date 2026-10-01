@@ -35,3 +35,47 @@ jobs:
 
     - name: Build release binary
       run: cargo build --release
+
+  visual-e2e:
+    name: Web UI Visual Regression & Video (Playwright)
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build release binary
+      run: cargo build --release
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Install npm dependencies
+      run: npm ci || npm install
+
+    - name: Install Playwright browsers with OS dependencies
+      run: npx playwright install --with-deps chromium
+
+    - name: Run Playwright Visual & Video Tests
+      run: npm run test:e2e
+
+    - name: Upload Playwright Visual Artifacts (Videos, Screenshots & Reports)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-visual-report
+        path: |
+          playwright-report/
+          test-results/
+          screenshots/
+        retention-days: 14

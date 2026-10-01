@@ -6,8 +6,8 @@ Skill Atlas is an interactive CLI designed to maximize developer efficiency and 
 ## Core Command & Usage
 
 ```bash
-# Scan a repository for AI agent skills
-skill-atlas scan <githubrepo>
+# Scan a single repository or multiple repositories for AI agent skills
+skill-atlas scan <githubrepo>...
 
 # List all cached skills from local SQLite database
 skill-atlas list
@@ -19,18 +19,18 @@ skill-atlas filter <query>
 skill-atlas similar [target]
 
 # Start localhost web interface
-skill-atlas web
+skill-atlas web [--port <PORT>] [--no-open]
 
 # Interactive session (persistent `skill-atlas>` prompt when launched without arguments)
 skill-atlas
 ```
 
 ### Core Commands & Arguments
-- `scan <githubrepo>`: Target repository identifier or URL (e.g., `owner/repo`, `https://github.com/owner/repo`, or `git@github.com:...`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed.
+- `scan <githubrepo>...`: Target repository identifier(s) or URL(s) (e.g., `owner/repo`, `https://github.com/owner/repo`, `git@github.com:...`, or space/comma-separated lists such as `openai/swarm JetBrains/kotlin` or `"openai/swarm, JetBrains/kotlin"`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed.
 - `list` (alias `ls`): Load and display all cached skills across all repositories stored in the local SQLite database (`~/.skill-atlas/skills.db`).
 - `filter [query]` (alias `f`): Filter skills by keyword query across name, description, or file path.
 - `similar [target]`: Find similar skills based on heuristics and similarity percentages (threshold >= 30.0%). Without arguments, lists all detected similar pairs. With a target skill, lists all skills similar to that target.
-- `web` (alias `serve`): Start the localhost web interface on port 3000 (`-p, --port <PORT>`).
+- `web` (alias `serve`): Start the localhost web interface on port 3000 (`-p, --port <PORT>`, `--no-open`).
 - Environment variables (`GITHUB_TOKEN`, `GH_TOKEN`) are automatically loaded from `.env` files to prevent API rate limiting.
 
 ### Web Interface & UI
@@ -107,8 +107,8 @@ JetBrains/kotlin 6 skills
 
      | Command | Behavior |
      | --- | --- |
-     | `scan <githubrepo> [-b\|--branch <BRANCH>] [--refresh\|--no-cache] [-f\|--filter <QUERY>]` | Scan a repository and show the interactive menu. A bare repository (contains `/` or starts with `git@`) is treated as `scan <repo>`. Missing repository, a missing branch value, extra repositories or unknown options print `Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh] [--filter <QUERY>]`. |
-     | `rescan` / `refresh` | Re-scan the last successfully scanned repository (same branch), bypassing the cache. Without a previous scan: `Nothing to rescan yet. Run 'scan <githubrepo>' first.` |
+     | `scan <githubrepo>... [-b\|--branch <BRANCH>] [--refresh\|--no-cache] [-f\|--filter <QUERY>]` | Scan one or multiple repositories and show the interactive menu. Bare repositories (contains `/` or starts with `git@`) are treated as `scan <repos>`. Missing repository, a missing branch value, or unknown options print `Usage: scan <githubrepo>... [--branch <BRANCH>] [--refresh] [--filter <QUERY>]`. |
+     | `rescan` / `refresh` | Re-scan the last successfully scanned repository or repositories (same branch), bypassing the cache. Without a previous scan: `Nothing to rescan yet. Run 'scan <githubrepo>' first.` |
      | `list` / `ls` | Show the skills of the last scan again in the menu (respecting any active filter). |
      | `filter [query\|clear]` / `f` | Filter current scan results across name, description, or path. Running without arguments or `filter clear` resets the filter. |
      | `similar [<number\|name>]` | Find and report similar skills based on heuristics and similarity percentages (threshold >= 30%). Without arguments, lists all detected similar pairs. With a skill index or name, lists all skills similar to that target. |

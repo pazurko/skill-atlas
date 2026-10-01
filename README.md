@@ -56,8 +56,11 @@ cargo install --path .
 ### Core Commands
 
 ```bash
-# Scan a GitHub repository
-skill-atlas scan <githubrepo>
+# Scan a single GitHub repository or multiple repositories at once
+skill-atlas scan <githubrepo>...
+# e.g.:
+# skill-atlas scan openai/swarm JetBrains/kotlin
+# skill-atlas scan "openai/swarm, JetBrains/kotlin"
 
 # List all cached skills from local SQLite database
 skill-atlas list
@@ -69,7 +72,7 @@ skill-atlas filter <query>
 skill-atlas similar [target]
 
 # Launch localhost web interface
-skill-atlas web
+skill-atlas web [--port <PORT>] [--no-open]
 
 # Interactive session (prompt when launched without arguments)
 skill-atlas
@@ -81,18 +84,18 @@ In a terminal, running `skill-atlas` or `skill-atlas scan <repo>` starts the per
 ⚡ Welcome to Skill Atlas!
 Type 'scan <githubrepo>' (e.g. scan https://github.com/JetBrains/kotlin), 'help' for commands, or 'exit' to quit.
 
-skill-atlas> scan JetBrains/kotlin          # opens the arrow-key menu; q returns here
-skill-atlas> open 3                         # open skill #3 of the last scan
-skill-atlas> list                           # show all cached skills from database
-skill-atlas> filter gradle                  # filter skills by keyword
-skill-atlas> similar                        # discover similar skills and duplicate pairs
-skill-atlas> web                            # start web interface
+skill-atlas> scan JetBrains/kotlin openai/swarm # scan multiple repos in one go
+skill-atlas> open 3                            # open skill #3 of the scan
+skill-atlas> list                              # show all cached skills from database
+skill-atlas> filter gradle                     # filter skills by keyword
+skill-atlas> similar                           # discover similar skills and duplicate pairs
+skill-atlas> web                               # start web interface
 skill-atlas> exit
 ```
 
 | Command | Action |
 | --- | --- |
-| `scan <githubrepo>` | Scan a GitHub repository (a bare `owner/repo` or URL works too) |
+| `scan <githubrepo>...` | Scan one or multiple GitHub repositories (bare `owner/repo` or URLs work too) |
 | `list` / `ls` | Show all cached skills from SQLite database or current scan |
 | `filter [query\|clear]` / `f` | Filter skills by name, description, or path |
 | `similar [<number\|name>]` | Discover similar skills and duplicate definitions by percentage |
@@ -145,10 +148,20 @@ JetBrains/kotlin 6 skills
 
 ## 🧪 Testing
 
-Run all unit and integration test suites:
+### Unit & Integration Tests (Rust)
+Run all Rust unit and integration test suites:
 
 ```bash
 cargo test
+```
+
+### Web UI Visual Regression & Video Testing (Playwright)
+Run the Playwright E2E visual regression and interaction suite to test the Web UI, capture visual screenshots, and record videos:
+
+```bash
+# Build binary and run Playwright suite
+cargo build --release
+npm run test:e2e
 ```
 
 ---

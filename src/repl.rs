@@ -15,14 +15,14 @@ pub const PROMPT: &str = "skill-atlas> ";
 pub enum ReplCommand {
     /// Blank line, nothing to do.
     Empty,
-    /// Scan a repository (a bare `owner/repo` or URL is treated as `scan <repo>`).
+    /// Scan one or more repositories (bare `owner/repo` or URLs are treated as `scan <repo>`).
     Scan {
-        repo: String,
+        repos: Vec<String>,
         branch: Option<String>,
         refresh: bool,
         filter: Option<String>,
     },
-    /// Re-scan the last scanned repository, bypassing the cache.
+    /// Re-scan the last scanned repository or repositories, bypassing the cache.
     Rescan,
     /// Show the skills of the last scan again.
     List,
@@ -47,7 +47,7 @@ pub enum ReplCommand {
 }
 
 pub const SCAN_USAGE: &str =
-    "Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh] [--filter <QUERY>]";
+    "Usage: scan <githubrepo>... [--branch <BRANCH>] [--refresh] [--filter <QUERY>]";
 pub const OPEN_USAGE: &str = "Usage: open <number|name>";
 pub const WEB_USAGE: &str = "Usage: web [--port <PORT>] [--no-open]";
 pub const FILTER_USAGE: &str = "Usage: filter [query|clear]";
@@ -138,7 +138,7 @@ fn looks_like_repo(token: &str) -> bool {
 }
 
 fn parse_scan_args(args: &[&str]) -> ReplCommand {
-    let mut repo: Option<String> = None;
+    let mut repos: Vec<String> = Vec::new();
     let mut branch: Option<String> = None;
     let mut refresh = false;
     let mut filter: Option<String> = None;
@@ -165,22 +165,25 @@ fn parse_scan_args(args: &[&str]) -> ReplCommand {
                 return ReplCommand::Invalid(format!("Unknown option '{}'. {}", flag, SCAN_USAGE));
             }
             value => {
-                if repo.is_some() {
-                    return ReplCommand::Invalid(SCAN_USAGE.to_string());
+                for part in value.split([',', ';']) {
+                    let trimmed = part.trim();
+                    if !trimmed.is_empty() {
+                        repos.push(trimmed.to_string());
+                    }
                 }
-                repo = Some(value.to_string());
             }
         }
     }
 
-    match repo {
-        Some(repo) => ReplCommand::Scan {
-            repo,
+    if repos.is_empty() {
+        ReplCommand::Invalid(SCAN_USAGE.to_string())
+    } else {
+        ReplCommand::Scan {
+            repos,
             branch,
             refresh,
             filter,
-        },
-        None => ReplCommand::Invalid(SCAN_USAGE.to_string()),
+        }
     }
 }
 
@@ -235,6 +238,8 @@ pub struct ReplSession {
     pub options: ScannerOptions,
     /// Repository input of the last successful scan.
     pub last_repo: Option<String>,
+    /// Repository inputs of the last successful scan.
+    pub last_repos: Vec<String>,
     /// Branch override used by the last successful scan.
     pub last_branch: Option<String>,
     /// `owner/repo` of the last successful scan.
@@ -255,26 +260,19 @@ impl ReplSession {
         }
     }
 
-    /// Scans a repository, reports errors without aborting, and presents results.
+    /// Scans one or more repositories, reports errors without aborting, and presents results.
     pub async fn scan<W: Write, U: ReplUi>(
         &mut self,
         out: &mut W,
         ui: &mut U,
-        repo: &str,
+        repos: &[String],
         branch: Option<String>,
         refresh: bool,
         filter: Option<String>,
     ) -> io::Result<()> {
-        writeln!(
-            out,
-            "{}",
-            format!(
-                "\n🔍 Scanning repository {} for agent skills...",
-                repo.bold()
-            )
-            .cyan()
-        )?;
-        out.flush()?;
+        if repos.is_empty() {
+            return Ok(());
+        }
 
         let mut options = self.options.clone();
         if branch.is_some() {
@@ -282,67 +280,173 @@ impl ReplSession {
         }
         options.no_cache = options.no_cache || refresh;
 
-        match scan_github_repo(repo, &options).await {
-            Ok(result) => {
-                if let Some(msg) = cache_message(&result) {
-                    writeln!(out, "{}", msg.green())?;
-                }
-                if let Some(msg) = truncation_message(&result) {
-                    writeln!(out, "{}", msg.yellow())?;
-                }
-                let repo_name = format!("{}/{}", result.owner, result.repo);
-                self.last_repo = Some(repo.to_string());
-                self.last_branch = branch;
-                self.repo_name = Some(repo_name.clone());
-                self.skills = result.skills;
-                self.active_filter = filter;
+        if repos.len() == 1 {
+            let repo = &repos[0];
+            writeln!(
+                out,
+                "{}",
+                format!(
+                    "\n🔍 Scanning repository {} for agent skills...",
+                    repo.bold()
+                )
+                .cyan()
+            )?;
+            out.flush()?;
 
-                let displayed = if let Some(f) = &self.active_filter {
-                    crate::similarity::filter_skills(&self.skills, f)
-                } else {
-                    self.skills.clone()
-                };
+            match scan_github_repo(repo, &options).await {
+                Ok(result) => {
+                    if let Some(msg) = cache_message(&result) {
+                        writeln!(out, "{}", msg.green())?;
+                    }
+                    if let Some(msg) = truncation_message(&result) {
+                        writeln!(out, "{}", msg.yellow())?;
+                    }
+                    let repo_name = format!("{}/{}", result.owner, result.repo);
+                    self.last_repo = Some(repo.to_string());
+                    self.last_repos = repos.to_vec();
+                    self.last_branch = branch;
+                    self.repo_name = Some(repo_name.clone());
+                    self.skills = result.skills;
+                    self.active_filter = filter;
 
-                if self.skills.is_empty() {
-                    writeln!(
-                        out,
-                        "{}",
-                        format!("\nNo agent skills found in {}.\n", repo_name.bold()).yellow()
-                    )?;
-                } else if displayed.is_empty() {
-                    writeln!(
-                        out,
-                        "{}",
-                        format!(
-                            "\nNo agent skills matched filter '{}' (0 of {} skills in {}).\n",
-                            self.active_filter.as_deref().unwrap_or_default(),
-                            self.skills.len(),
-                            repo_name.bold()
-                        )
-                        .yellow()
-                    )?;
-                } else {
-                    let title = if self.active_filter.is_some() {
-                        format!(
-                            "{} (filtered: {} of {})",
-                            repo_name,
-                            displayed.len(),
-                            self.skills.len()
-                        )
+                    let displayed = if let Some(f) = &self.active_filter {
+                        crate::similarity::filter_skills(&self.skills, f)
                     } else {
-                        repo_name
+                        self.skills.clone()
                     };
-                    ui.show_skills(out, &displayed, &title, &mut self.history)?;
-                    writeln!(
-                        out,
-                        "{}",
-                        "Type 'open <number|name>', 'filter [query]', 'similar', 'list', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
-                            .dimmed()
-                    )?;
+
+                    if self.skills.is_empty() {
+                        writeln!(
+                            out,
+                            "{}",
+                            format!("\nNo agent skills found in {}.\n", repo_name.bold()).yellow()
+                        )?;
+                    } else if displayed.is_empty() {
+                        writeln!(
+                            out,
+                            "{}",
+                            format!(
+                                "\nNo agent skills matched filter '{}' (0 of {} skills in {}).\n",
+                                self.active_filter.as_deref().unwrap_or_default(),
+                                self.skills.len(),
+                                repo_name.bold()
+                            )
+                            .yellow()
+                        )?;
+                    } else {
+                        let title = if self.active_filter.is_some() {
+                            format!(
+                                "{} (filtered: {} of {})",
+                                repo_name,
+                                displayed.len(),
+                                self.skills.len()
+                            )
+                        } else {
+                            repo_name
+                        };
+                        ui.show_skills(out, &displayed, &title, &mut self.history)?;
+                        writeln!(
+                            out,
+                            "{}",
+                            "Type 'open <number|name>', 'filter [query]', 'similar', 'list', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
+                                .dimmed()
+                        )?;
+                    }
+                }
+                Err(err) => {
+                    writeln!(out, "{}", format!("\n❌ Error: {}\n", err).red())?;
                 }
             }
-            Err(err) => {
-                writeln!(out, "{}", format!("\n❌ Error: {}\n", err).red())?;
+        } else {
+            writeln!(
+                out,
+                "{}",
+                format!(
+                    "\n🔍 Scanning {} repositories for agent skills...",
+                    repos.len()
+                )
+                .cyan()
+            )?;
+            out.flush()?;
+
+            let mut all_skills = Vec::new();
+
+            for repo in repos {
+                writeln!(out, "{}", format!(" • Scanning {}...", repo.bold()).cyan())?;
+                out.flush()?;
+
+                match scan_github_repo(repo, &options).await {
+                    Ok(result) => {
+                        if let Some(msg) = cache_message(&result) {
+                            writeln!(out, "   {}", msg.green())?;
+                        }
+                        if let Some(msg) = truncation_message(&result) {
+                            writeln!(out, "   {}", msg.yellow())?;
+                        }
+                        all_skills.extend(result.skills);
+                    }
+                    Err(err) => {
+                        writeln!(
+                            out,
+                            "{}",
+                            format!("   ❌ Error for {}: {}", repo, err).red()
+                        )?;
+                    }
+                }
+            }
+
+            self.last_repo = Some(repos.join(" "));
+            self.last_repos = repos.to_vec();
+            self.last_branch = branch;
+            self.repo_name = Some(format!(
+                "Multiple Repositories ({} repos, {} skills)",
+                repos.len(),
+                all_skills.len()
+            ));
+            self.skills = all_skills;
+            self.active_filter = filter;
+
+            let displayed = if let Some(f) = &self.active_filter {
+                crate::similarity::filter_skills(&self.skills, f)
+            } else {
+                self.skills.clone()
+            };
+
+            if self.skills.is_empty() {
+                writeln!(
+                    out,
+                    "{}",
+                    "\nNo agent skills found in the scanned repositories.\n".yellow()
+                )?;
+            } else if displayed.is_empty() {
+                writeln!(
+                    out,
+                    "{}",
+                    format!(
+                        "\nNo agent skills matched filter '{}' (0 of {} skills across {} repositories).\n",
+                        self.active_filter.as_deref().unwrap_or_default(),
+                        self.skills.len(),
+                        repos.len()
+                    )
+                    .yellow()
+                )?;
+            } else {
+                let title = if self.active_filter.is_some() {
+                    format!(
+                        "Multiple Repositories (filtered: {} of {})",
+                        displayed.len(),
+                        self.skills.len()
+                    )
+                } else {
+                    format!("Multiple Repositories ({} skills)", self.skills.len())
+                };
+                ui.show_skills(out, &displayed, &title, &mut self.history)?;
+                writeln!(
+                    out,
+                    "{}",
+                    "Type 'open <number|name>', 'filter [query]', 'similar', 'list', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
+                        .dimmed()
+                )?;
             }
         }
         Ok(())
@@ -394,23 +498,29 @@ impl ReplSession {
             ReplCommand::Clear => ui.clear_screen(out)?,
             ReplCommand::Invalid(msg) => writeln!(out, "{}", msg.yellow())?,
             ReplCommand::Scan {
-                repo,
+                repos,
                 branch,
                 refresh,
                 filter,
-            } => self.scan(out, ui, &repo, branch, refresh, filter).await?,
-            ReplCommand::Rescan => match self.last_repo.clone() {
-                Some(repo) => {
+            } => self.scan(out, ui, &repos, branch, refresh, filter).await?,
+            ReplCommand::Rescan => {
+                if !self.last_repos.is_empty() {
+                    let repos = self.last_repos.clone();
                     let branch = self.last_branch.clone();
-                    self.scan(out, ui, &repo, branch, true, self.active_filter.clone())
+                    self.scan(out, ui, &repos, branch, true, self.active_filter.clone())
                         .await?;
+                } else if let Some(repo) = self.last_repo.clone() {
+                    let branch = self.last_branch.clone();
+                    self.scan(out, ui, &[repo], branch, true, self.active_filter.clone())
+                        .await?;
+                } else {
+                    writeln!(
+                        out,
+                        "{}",
+                        "Nothing to rescan yet. Run 'scan <githubrepo>' first.".yellow()
+                    )?;
                 }
-                None => writeln!(
-                    out,
-                    "{}",
-                    "Nothing to rescan yet. Run 'scan <githubrepo>' first.".yellow()
-                )?,
-            },
+            }
             ReplCommand::List => {
                 if self.skills.is_empty() {
                     // Try to load from SQLite database

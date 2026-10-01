@@ -1,0 +1,14 @@
+{
+  "name": "skill-atlas-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Playwright Visual Regression and Video E2E Test Suite for Skill Atlas Web UI",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:update-snapshots": "playwright test --update-snapshots"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "playwright": "^1.49.0"
+  }
+}

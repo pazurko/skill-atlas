@@ -8,7 +8,7 @@ fn test_cli_parse_scan_basic() {
 
     match cli.command {
         Some(Commands::Scan { githubrepo }) => {
-            assert_eq!(githubrepo, Some("openai/swarm".to_string()));
+            assert_eq!(githubrepo, vec!["openai/swarm".to_string()]);
         }
         _ => panic!("Expected Scan command"),
     }
@@ -20,10 +20,55 @@ fn test_cli_parse_scan_without_repo() {
     let cli = Cli::try_parse_from(args).unwrap();
     match cli.command {
         Some(Commands::Scan { githubrepo }) => {
-            assert_eq!(githubrepo, None);
+            assert!(githubrepo.is_empty());
         }
         _ => panic!("Expected Scan command"),
     }
+}
+
+#[test]
+fn test_cli_parse_scan_multiple_repos() {
+    let args = vec![
+        "skill-atlas",
+        "scan",
+        "openai/swarm",
+        "JetBrains/kotlin",
+        "anthropics/anthropic-quickstarts",
+    ];
+    let cli = Cli::try_parse_from(args).unwrap();
+    match cli.command {
+        Some(Commands::Scan { githubrepo }) => {
+            assert_eq!(
+                githubrepo,
+                vec![
+                    "openai/swarm".to_string(),
+                    "JetBrains/kotlin".to_string(),
+                    "anthropics/anthropic-quickstarts".to_string()
+                ]
+            );
+        }
+        _ => panic!("Expected Scan command"),
+    }
+}
+
+#[test]
+fn test_extract_targets_helper() {
+    let inputs = vec![
+        "openai/swarm".to_string(),
+        "JetBrains/kotlin, anthropics/anthropic-quickstarts".to_string(),
+        "repo/a;repo/b".to_string(),
+    ];
+    let extracted = skill_atlas::cli::extract_targets(&inputs);
+    assert_eq!(
+        extracted,
+        vec![
+            "openai/swarm".to_string(),
+            "JetBrains/kotlin".to_string(),
+            "anthropics/anthropic-quickstarts".to_string(),
+            "repo/a".to_string(),
+            "repo/b".to_string()
+        ]
+    );
 }
 
 #[test]
@@ -84,19 +129,21 @@ fn test_cli_parse_web_default_and_alias() {
     let args = vec!["skill-atlas", "web"];
     let cli = Cli::try_parse_from(args).unwrap();
     match cli.command {
-        Some(Commands::Web { port }) => {
+        Some(Commands::Web { port, no_open }) => {
             assert_eq!(port, 3000);
+            assert!(!no_open);
         }
         _ => panic!("Expected Web command"),
     }
 
-    let args_serve = vec!["skill-atlas", "serve", "-p", "8080"];
+    let args_serve = vec!["skill-atlas", "serve", "-p", "8080", "--no-open"];
     let cli_serve = Cli::try_parse_from(args_serve).unwrap();
     match cli_serve.command {
-        Some(Commands::Web { port }) => {
+        Some(Commands::Web { port, no_open }) => {
             assert_eq!(port, 8080);
+            assert!(no_open);
         }
-        _ => panic!("Expected Web command with port 8080"),
+        _ => panic!("Expected Web command with port 8080 and no-open"),
     }
 }
 

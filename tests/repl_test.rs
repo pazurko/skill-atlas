@@ -205,7 +205,7 @@ fn test_parse_scan_variants() {
     assert_eq!(
         parse_command("scan acme/skills"),
         ReplCommand::Scan {
-            repo: "acme/skills".into(),
+            repos: vec!["acme/skills".into()],
             branch: None,
             refresh: false,
             filter: None,
@@ -214,7 +214,7 @@ fn test_parse_scan_variants() {
     assert_eq!(
         parse_command("scan https://github.com/acme/skills -b dev --refresh"),
         ReplCommand::Scan {
-            repo: "https://github.com/acme/skills".into(),
+            repos: vec!["https://github.com/acme/skills".into()],
             branch: Some("dev".into()),
             refresh: true,
             filter: None,
@@ -223,17 +223,35 @@ fn test_parse_scan_variants() {
     assert_eq!(
         parse_command("scan --branch=main acme/skills --no-cache -f review"),
         ReplCommand::Scan {
-            repo: "acme/skills".into(),
+            repos: vec!["acme/skills".into()],
             branch: Some("main".into()),
             refresh: true,
             filter: Some("review".into()),
+        }
+    );
+    assert_eq!(
+        parse_command("scan acme/skills other/repo"),
+        ReplCommand::Scan {
+            repos: vec!["acme/skills".into(), "other/repo".into()],
+            branch: None,
+            refresh: false,
+            filter: None,
+        }
+    );
+    assert_eq!(
+        parse_command("scan acme/skills, other/repo"),
+        ReplCommand::Scan {
+            repos: vec!["acme/skills".into(), "other/repo".into()],
+            branch: None,
+            refresh: false,
+            filter: None,
         }
     );
     // Bare repository input is treated as a scan
     assert_eq!(
         parse_command("https://github.com/acme/skills"),
         ReplCommand::Scan {
-            repo: "https://github.com/acme/skills".into(),
+            repos: vec!["https://github.com/acme/skills".into()],
             branch: None,
             refresh: false,
             filter: None,
@@ -242,7 +260,7 @@ fn test_parse_scan_variants() {
     assert_eq!(
         parse_command("git@github.com:acme/skills.git"),
         ReplCommand::Scan {
-            repo: "git@github.com:acme/skills.git".into(),
+            repos: vec!["git@github.com:acme/skills.git".into()],
             branch: None,
             refresh: false,
             filter: None,
@@ -281,10 +299,6 @@ fn test_parse_invalid_commands() {
     );
     assert_eq!(
         parse_command("scan a/b -b"),
-        ReplCommand::Invalid(SCAN_USAGE.into())
-    );
-    assert_eq!(
-        parse_command("scan a/b c/d"),
         ReplCommand::Invalid(SCAN_USAGE.into())
     );
     assert!(
@@ -776,6 +790,47 @@ async fn test_session_similar_command() {
     // Similar to skill [1] finds skill [2]
     assert!(out.contains("Skills similar to 'code-review' (threshold: >= 30%):"));
     assert!(out.contains("[2] › code-review (100% similar)"));
+
+    let _ = std::fs::remove_file(db);
+}
+
+#[tokio::test]
+async fn test_session_scan_multiple_repositories() {
+    let server = MockServer::start().await;
+    mount_repo(
+        &server,
+        "acme",
+        "repo-one",
+        "sha_1",
+        &[("skill-a", "skill-a")],
+    )
+    .await;
+    mount_repo(
+        &server,
+        "acme",
+        "repo-two",
+        "sha_2",
+        &[("skill-b", "skill-b"), ("skill-c", "skill-c")],
+    )
+    .await;
+    let (options, db) = options_for(&server, "multi_session");
+
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi::default();
+    let out = run_script(
+        &mut session,
+        &mut ui,
+        "scan acme/repo-one acme/repo-two\nrescan\nexit\n",
+    )
+    .await;
+
+    assert!(out.contains("Scanning 2 repositories for agent skills..."));
+    assert!(out.contains("Scanning acme/repo-one..."));
+    assert!(out.contains("Scanning acme/repo-two..."));
+    assert_eq!(session.skills.len(), 3);
+    assert_eq!(session.skills[0].name, "skill-a");
+    assert_eq!(session.skills[1].name, "skill-b");
+    assert_eq!(session.skills[2].name, "skill-c");
 
     let _ = std::fs::remove_file(db);
 }

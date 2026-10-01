@@ -486,3 +486,111 @@ async fn test_web_api_scan_with_filter_and_similar() {
 
     let _ = std::fs::remove_file(db_path);
 }
+
+#[tokio::test]
+async fn test_web_api_scan_multiple_repositories() {
+    let mock_server = MockServer::start().await;
+
+    // Repo 1
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-one/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "sha_1" })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-one/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "tree_1",
+            "tree": [
+                { "path": "skills/skill-one/SKILL.md", "type": "blob", "sha": "b1" }
+            ]
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/acme/repo-one/sha_1/skills/skill-one/SKILL.md"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("---\nname: skill-one\ndescription: First skill.\n---\n"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Repo 2
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-two"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-two/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "sha_2" })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-two/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "tree_2",
+            "tree": [
+                { "path": "skills/skill-two/SKILL.md", "type": "blob", "sha": "b2" }
+            ]
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/acme/repo-two/sha_2/skills/skill-two/SKILL.md"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("---\nname: skill-two\ndescription: Second skill.\n---\n"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let db_path = std::env::temp_dir().join(format!("web_test_multi_{}.db", rand_nanos()));
+    let options = ScannerOptions {
+        base_api_url: Some(mock_server.uri()),
+        base_raw_url: Some(mock_server.uri()),
+        db_path: Some(db_path.clone()),
+        ..Default::default()
+    };
+
+    let (base_url, _) = spawn_test_app(options).await;
+    let client = reqwest::Client::new();
+
+    // 1. Scan multiple targets via POST /api/scan with targets array
+    let post_res = client
+        .post(format!("{}/api/scan", base_url))
+        .json(&json!({
+            "targets": ["acme/repo-one", "acme/repo-two"]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(post_res.status(), reqwest::StatusCode::OK);
+    let result: ScanResult = post_res.json().await.unwrap();
+    assert_eq!(result.skills.len(), 2);
+    assert_eq!(result.skills[0].name, "skill-one");
+    assert_eq!(result.skills[1].name, "skill-two");
+
+    // 2. Scan multiple targets via comma-separated string in repo field
+    let comma_res = client
+        .post(format!("{}/api/scan", base_url))
+        .json(&json!({
+            "repo": "acme/repo-one, acme/repo-two"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(comma_res.status(), reqwest::StatusCode::OK);
+    let comma_result: ScanResult = comma_res.json().await.unwrap();
+    assert_eq!(comma_result.skills.len(), 2);
+
+    let _ = std::fs::remove_file(db_path);
+}
