@@ -176,9 +176,11 @@ cargo test
 
 ---
 
-## 📖 Specifications & Agent Guidelines
+## 📖 Specifications & Shared Memory
 
+- **Shared Memory**: [`memory/README.md`](./memory/README.md)
 - **CLI Specification**: [`spec/cli.md`](./spec/cli.md)
+- **Memory Specification**: [`spec/memory.md`](./spec/memory.md)
 - **Agent Guidelines & Definition of Done**: [`agents.md`](./agents.md)
 
 ---
