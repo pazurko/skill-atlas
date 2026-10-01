@@ -1,6 +1,6 @@
 use crate::metadata::parse_skill_metadata;
-use crate::parser::{parse_repo_identifier, ParseError};
-use crate::storage::{get_cached_repository, open_db, save_cached_repository};
+use crate::parser::{parse_repo_identifier, ParseError, RepoIdentifier};
+use crate::storage::{get_cached_repository, is_skill_starred, open_db, save_cached_repository};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,25 @@ pub struct Skill {
     pub description: String,
     pub path: String,
     pub url: String,
+    #[serde(default)]
+    pub starred: bool,
+}
+
+impl Skill {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        path: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            path: path.into(),
+            url: url.into(),
+            starred: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -367,11 +386,16 @@ pub async fn scan_github_repo(
         .map(|(_, path, content)| {
             let metadata = parse_skill_metadata(&content, &path);
             let url = github_blob_url(&owner, &repo, &web_ref, &path);
+            let starred = db_conn
+                .as_ref()
+                .and_then(|c| is_skill_starred(c, &url).ok())
+                .unwrap_or(false);
             Skill {
                 name: metadata.name,
                 description: metadata.description,
                 path,
                 url,
+                starred,
             }
         })
         .collect();
@@ -401,4 +425,164 @@ pub async fn scan_github_repo(
         commit_sha: current_sha,
         truncated,
     })
+}
+
+#[derive(Deserialize)]
+struct OrgRepoItem {
+    name: String,
+    #[serde(default)]
+    owner: OrgRepoOwner,
+    #[serde(default)]
+    archived: bool,
+}
+
+#[derive(Deserialize, Default)]
+struct OrgRepoOwner {
+    #[serde(default)]
+    login: String,
+}
+
+/// Discovers all public non-archived repositories for a given organization or user.
+pub async fn fetch_org_repositories(
+    org: &str,
+    options: &ScannerOptions,
+) -> Result<Vec<RepoIdentifier>, ScannerError> {
+    let mut client_builder = reqwest::Client::builder();
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, HeaderValue::from_static("skill-atlas/0.1.0"));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github.v3+json"),
+    );
+    if let Some(token) = &options.token {
+        if let Ok(val) = HeaderValue::from_str(&format!("Bearer {}", token)) {
+            headers.insert(AUTHORIZATION, val);
+        }
+    }
+    client_builder = client_builder.default_headers(headers);
+    let client = client_builder.build()?;
+
+    let base_api = options
+        .base_api_url
+        .as_deref()
+        .unwrap_or("https://api.github.com");
+
+    let mut all_repos = Vec::new();
+    let mut is_user_fallback = false;
+
+    for page in 1..=10 {
+        let endpoint = if is_user_fallback { "users" } else { "orgs" };
+        let url = format!(
+            "{}/{}/{}/repos?type=public&per_page=100&page={}",
+            base_api, endpoint, org, page
+        );
+
+        let res = client.get(&url).send().await?;
+        let status = res.status();
+
+        if !status.is_success() {
+            if status == StatusCode::NOT_FOUND && !is_user_fallback && page == 1 {
+                // Try fallback to /users/{user}/repos
+                is_user_fallback = true;
+                let user_url = format!(
+                    "{}/users/{}/repos?type=public&per_page=100&page={}",
+                    base_api, org, page
+                );
+                let user_res = client.get(&user_url).send().await?;
+                if !user_res.status().is_success() {
+                    if user_res.status() == StatusCode::NOT_FOUND {
+                        return Err(ScannerError::NotFound(org.to_string(), "repos".to_string()));
+                    }
+                    return Err(ScannerError::ApiFailure(
+                        user_res.status(),
+                        user_res.text().await.unwrap_or_default(),
+                    ));
+                }
+                let items: Vec<OrgRepoItem> = user_res.json().await?;
+                let count = items.len();
+                for item in items {
+                    if !item.archived {
+                        let owner = if item.owner.login.is_empty() {
+                            org.to_string()
+                        } else {
+                            item.owner.login
+                        };
+                        all_repos.push(RepoIdentifier {
+                            owner,
+                            repo: item.name,
+                        });
+                    }
+                }
+                if count < 100 {
+                    break;
+                }
+                continue;
+            }
+
+            if status == StatusCode::NOT_FOUND {
+                return Err(ScannerError::NotFound(org.to_string(), "repos".to_string()));
+            }
+            if status == StatusCode::FORBIDDEN {
+                let is_rate_limited = res
+                    .headers()
+                    .get("x-ratelimit-remaining")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|v| v == "0")
+                    .unwrap_or(false);
+                let msg = if is_rate_limited {
+                    " GitHub API rate limit exceeded. Consider providing a token via GITHUB_TOKEN environment variable or --token option."
+                } else {
+                    ""
+                };
+                return Err(ScannerError::Forbidden(
+                    org.to_string(),
+                    "repos".to_string(),
+                    msg.to_string(),
+                ));
+            }
+            return Err(ScannerError::ApiFailure(
+                status,
+                res.text().await.unwrap_or_default(),
+            ));
+        }
+
+        let items: Vec<OrgRepoItem> = res.json().await?;
+        let count = items.len();
+        for item in items {
+            if !item.archived {
+                let owner = if item.owner.login.is_empty() {
+                    org.to_string()
+                } else {
+                    item.owner.login
+                };
+                all_repos.push(RepoIdentifier {
+                    owner,
+                    repo: item.name,
+                });
+            }
+        }
+        if count < 100 {
+            break;
+        }
+    }
+
+    Ok(all_repos)
+}
+
+/// Scans all repositories in a GitHub organization for skills and returns aggregated results.
+pub async fn scan_github_org(
+    org: &str,
+    options: &ScannerOptions,
+) -> Result<Vec<ScanResult>, ScannerError> {
+    let repos = fetch_org_repositories(org, options).await?;
+    let mut results = Vec::new();
+    for repo in repos {
+        let repo_identifier = format!("{}/{}", repo.owner, repo.repo);
+        match scan_github_repo(&repo_identifier, options).await {
+            Ok(scan_res) => results.push(scan_res),
+            Err(ScannerError::NotFound(_, _)) => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(results)
 }

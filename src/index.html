@@ -79,6 +79,9 @@
   .chip { font-size:12px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:2px 10px; }
   .chip b { color:var(--text); font-weight:600; }
   .chip.new b { color:var(--new); } .chip.updated b { color:var(--upd); }
+  .chip.clickable { cursor:pointer; user-select:none; transition:background .15s, border-color .15s, color .15s; }
+  .chip.clickable:hover { background:var(--panel-2); color:var(--text); border-color:var(--line-strong); }
+  .chip.clickable.active { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
   .yarn { width:20px; height:20px; color:var(--accent); animation:spin 1.1s linear infinite; }
   .yarn .line { fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; }
   @keyframes spin { to { transform:rotate(360deg); } }
@@ -110,6 +113,21 @@
   tbody tr:hover { background:var(--panel-2); }
   td.idx { color:var(--faint); font-variant-numeric:tabular-nums; width:48px; }
   tbody tr:hover td.idx { color:var(--accent); }
+  td.star-col { width:32px; padding-left:4px; padding-right:4px; text-align:center; }
+  .star-btn {
+    background:transparent; border:none; color:var(--faint); cursor:pointer; font-size:16px;
+    padding:4px; line-height:1; border-radius:6px; transition:color .15s, transform .12s;
+  }
+  .star-btn:hover { color:var(--accent); transform:scale(1.2); }
+  .star-btn.active { color:#f5a623; }
+  .modal-star-btn {
+    display:inline-flex; align-items:center; gap:6px; font-weight:600; font-size:13px;
+    border-radius:10px; padding:8px 14px; text-decoration:none; cursor:pointer;
+    background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    transition:background .2s, border-color .2s, color .2s, transform .12s;
+  }
+  .modal-star-btn:hover { border-color:var(--line-strong); background:var(--line); transform:translateY(-1px); }
+  .modal-star-btn.active { color:#f5a623; border-color:#f5a623; background:rgba(245,166,35,.1); }
   td.desc { color:var(--desc); }
   td.path { color:var(--muted); font-family:ui-monospace, Menlo, monospace; font-size:12px; word-break:break-all; }
   td.repo a { font-weight:500; color:var(--muted); white-space:nowrap; }
@@ -318,10 +336,12 @@
                title='Words match name, description, repository or path. Narrow down with repo:, name:, desc:, path:, status: and "quoted phrases"; all terms must match.'>
       </label>
       <button class="ghost" id="show-all" type="button">Show all saved</button>
+      <button class="ghost" id="show-starred" type="button">⭐ Starred</button>
     </div>
     <div class="table-wrap">
       <table>
         <thead><tr>
+          <th data-key="starred" class="star-col" title="Sort by Starred">★</th>
           <th data-key="index">#</th>
           <th data-key="name">Name</th>
           <th data-key="description">Description</th>
@@ -382,6 +402,9 @@
             </div>
           </div>
           <div class="modal-actions">
+            <button id="modal-star-btn" class="modal-star-btn" type="button">
+              ☆ Star
+            </button>
             <a id="modal-github-link" class="btn" target="_blank" rel="noopener">
               Open in GitHub &#x2197;
             </a>
@@ -471,9 +494,9 @@
     body.appendChild(tr);
   }
 
-  // Query parser matching: words, "phrases", repo: name: desc: path: status:
+  // Query parser matching: words, "phrases", repo: name: desc: path: status: is: starred:
   const FIELDS = { repo: ["repo_url", "repo"], name: ["name"], desc: ["description"], description: ["description"],
-                   path: ["file_path", "path"], status: ["status"] };
+                   path: ["file_path", "path"], status: ["status"], is: ["status"], starred: ["status"] };
   const TEXT_FIELDS = ["name", "description", "file_path", "path", "repo_url", "repo"];
 
   function parseQuery(query) {
@@ -499,8 +522,14 @@
   }
 
   function matches(row, terms) {
-    return terms.every(([field, value]) => (field ? FIELDS[field] : TEXT_FIELDS)
-      .some(a => String(row[a] || "").toLowerCase().includes(value)));
+    return terms.every(([field, value]) => {
+      if (field === "status" || field === "is" || field === "starred") {
+        if (value === "starred" || value === "true" || value === "yes") return !!row.starred;
+        if (value === "unstarred" || value === "false" || value === "no") return !row.starred;
+      }
+      return (field ? FIELDS[field] : TEXT_FIELDS)
+        .some(a => String(row[a] || "").toLowerCase().includes(value));
+    });
   }
 
   // Heuristic similarity logic
@@ -655,6 +684,38 @@
     $("modal-path").textContent = skill.file_path || skill.path || "";
     $("modal-github-link").href = safeUrl(skill.web_url || skill.url || rawRepo);
 
+    const starBtn = $("modal-star-btn");
+    starBtn.className = "modal-star-btn" + (skill.starred ? " active" : "");
+    starBtn.textContent = skill.starred ? "★ Starred" : "☆ Star";
+    starBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const newStarred = !skill.starred;
+      try {
+        await api("/api/star", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: skill.web_url || skill.url || skill.repo_url,
+            starred: newStarred,
+            name: skill.name,
+            description: skill.description,
+            path: skill.file_path || skill.path
+          })
+        });
+        skill.starred = newStarred;
+        for (const r of rows) {
+          if (r.url === skill.url || r.web_url === skill.url) {
+            r.starred = newStarred;
+          }
+        }
+        starBtn.className = "modal-star-btn" + (newStarred ? " active" : "");
+        starBtn.textContent = newStarred ? "★ Starred" : "☆ Star";
+        render();
+      } catch (err) {
+        console.error("Failed to toggle star", err);
+      }
+    };
+
     const simContainer = $("similar-list");
     simContainer.replaceChildren();
 
@@ -804,6 +865,37 @@
     for (const r of view) {
       const tr = document.createElement("tr");
       tr.title = "View details and similar skills";
+
+      const starTd = cell(tr, "", "star-col");
+      const starBtn = document.createElement("button");
+      starBtn.className = "star-btn" + (r.starred ? " active" : "");
+      starBtn.textContent = r.starred ? "★" : "☆";
+      starBtn.title = r.starred ? "Starred (click to unstar)" : "Click to star";
+      starBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const newStarred = !r.starred;
+        try {
+          await api("/api/star", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: r.web_url || r.url || r.repo_url,
+              starred: newStarred,
+              name: r.name,
+              description: r.description,
+              path: r.file_path || r.path
+            })
+          });
+          r.starred = newStarred;
+          starBtn.className = "star-btn" + (newStarred ? " active" : "");
+          starBtn.textContent = newStarred ? "★" : "☆";
+          starBtn.title = newStarred ? "Starred (click to unstar)" : "Click to star";
+        } catch (err) {
+          console.error("Failed to toggle star", err);
+        }
+      });
+      starTd.appendChild(starBtn);
+
       cell(tr, String(r.index), "idx");
       const nameTd = cell(tr, "");
       const a = document.createElement("a");
@@ -918,6 +1010,18 @@
       load(data.skills);
       setStatus("Everything saved in the local database");
       setStats([["skills", (data.skills || []).length]]);
+    } catch (err) {
+      setStatus(err.message, "error");
+    }
+  });
+
+  $("show-starred").addEventListener("click", async () => {
+    try {
+      setStatus("Loading starred skills from SQLite database ...", "loading");
+      const data = await api("/api/starred");
+      load(data.skills);
+      setStatus("Starred skills from the local database");
+      setStats([["starred", (data.skills || []).length]]);
     } catch (err) {
       setStatus(err.message, "error");
     }

@@ -1,8 +1,9 @@
 use rusqlite::Connection;
 use skill_atlas::scanner::Skill;
 use skill_atlas::storage::{
-    clear_cache, get_all_cached_skills, get_cached_repository, init_db,
-    list_all_cached_repositories, save_cached_repository,
+    clear_cache, get_all_cached_skills, get_cached_repository, get_starred_skills, init_db,
+    is_skill_starred, list_all_cached_repositories, save_cached_repository, set_skill_starred,
+    toggle_skill_starred,
 };
 
 #[test]
@@ -18,6 +19,9 @@ fn test_storage_init_and_empty() {
 
     let all_skills = get_all_cached_skills(&conn).unwrap();
     assert!(all_skills.is_empty());
+
+    let starred = get_starred_skills(&conn).unwrap();
+    assert!(starred.is_empty());
 }
 
 #[test]
@@ -31,12 +35,14 @@ fn test_storage_save_and_retrieve() {
             description: "Fetches weather forecasts".to_string(),
             path: "skills/weather/SKILL.md".to_string(),
             url: "https://github.com/openai/swarm/blob/main/skills/weather/SKILL.md".to_string(),
+            starred: false,
         },
         Skill {
             name: "search-tool".to_string(),
             description: "Searches web endpoints".to_string(),
             path: "skills/search/skill.json".to_string(),
             url: "https://github.com/openai/swarm/blob/main/skills/search/skill.json".to_string(),
+            starred: false,
         },
     ];
 
@@ -74,6 +80,7 @@ fn test_storage_update_upsert() {
         description: "Version 1 skill".to_string(),
         path: "skills/v1/SKILL.md".to_string(),
         url: "https://github.com/test/repo/blob/main/skills/v1/SKILL.md".to_string(),
+        starred: false,
     }];
 
     save_cached_repository(
@@ -93,12 +100,14 @@ fn test_storage_update_upsert() {
             description: "Version 2 skill A".to_string(),
             path: "skills/v2a/SKILL.md".to_string(),
             url: "https://github.com/test/repo/blob/main/skills/v2a/SKILL.md".to_string(),
+            starred: false,
         },
         Skill {
             name: "v2-skill-b".to_string(),
             description: "Version 2 skill B".to_string(),
             path: "skills/v2b/SKILL.md".to_string(),
             url: "https://github.com/test/repo/blob/main/skills/v2b/SKILL.md".to_string(),
+            starred: false,
         },
     ];
 
@@ -133,6 +142,7 @@ fn test_storage_clear_cache() {
         description: "Test".to_string(),
         path: "skills/SKILL.md".to_string(),
         url: "https://github.com/a/b/blob/main/skills/SKILL.md".to_string(),
+        starred: false,
     }];
 
     save_cached_repository(&mut conn, "a", "b", "main", Some("sha123"), None, &skills).unwrap();
@@ -158,6 +168,7 @@ fn test_storage_get_all_cached_skills_multiple_repos() {
         description: "B Skill".to_string(),
         path: "skills/b/SKILL.md".to_string(),
         url: "https://github.com/org/repo1/blob/main/skills/b/SKILL.md".to_string(),
+        starred: false,
     }];
 
     let repo2_skills = vec![Skill {
@@ -165,6 +176,7 @@ fn test_storage_get_all_cached_skills_multiple_repos() {
         description: "A Skill".to_string(),
         path: "skills/a/SKILL.md".to_string(),
         url: "https://github.com/org/repo2/blob/main/skills/a/SKILL.md".to_string(),
+        starred: false,
     }];
 
     save_cached_repository(
@@ -192,4 +204,52 @@ fn test_storage_get_all_cached_skills_multiple_repos() {
     assert_eq!(all_skills.len(), 2);
     assert_eq!(all_skills[0].name, "b-skill");
     assert_eq!(all_skills[1].name, "a-skill");
+}
+
+#[test]
+fn test_storage_star_and_unstar_skills() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    init_db(&conn).unwrap();
+
+    let skill = Skill {
+        name: "test-star".to_string(),
+        description: "Star test".to_string(),
+        path: "skills/star/SKILL.md".to_string(),
+        url: "https://github.com/org/repo/blob/main/skills/star/SKILL.md".to_string(),
+        starred: false,
+    };
+
+    assert!(!is_skill_starred(&conn, &skill.url).unwrap());
+
+    // Toggle to starred
+    let is_starred = toggle_skill_starred(&conn, &skill).unwrap();
+    assert!(is_starred);
+    assert!(is_skill_starred(&conn, &skill.url).unwrap());
+
+    let starred_list = get_starred_skills(&conn).unwrap();
+    assert_eq!(starred_list.len(), 1);
+    assert_eq!(starred_list[0].name, "test-star");
+    assert!(starred_list[0].starred);
+
+    // Save repository cache and check that cached repository retrieves it as starred
+    save_cached_repository(
+        &mut conn,
+        "org",
+        "repo",
+        "main",
+        Some("commit_sha"),
+        None,
+        &[skill.clone()],
+    )
+    .unwrap();
+
+    let cached = get_cached_repository(&conn, "org", "repo", "main")
+        .unwrap()
+        .unwrap();
+    assert!(cached.1[0].starred);
+
+    // Unstar
+    set_skill_starred(&conn, &skill, false).unwrap();
+    assert!(!is_skill_starred(&conn, &skill.url).unwrap());
+    assert!(get_starred_skills(&conn).unwrap().is_empty());
 }

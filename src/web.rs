@@ -1,4 +1,5 @@
-use crate::scanner::{scan_github_repo, ScanResult, ScannerOptions};
+use crate::parser::{parse_scan_target, ScanTarget};
+use crate::scanner::{scan_github_org, scan_github_repo, ScanResult, ScannerOptions};
 use crate::similarity::{
     find_all_similar_pairs, find_similar_skills, SimilarPair, SimilarSkillMatch,
     DEFAULT_SIMILARITY_THRESHOLD,
@@ -51,6 +52,22 @@ pub struct ScanPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct StarPayload {
+    pub url: String,
+    pub starred: Option<bool>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StarResponse {
+    pub url: String,
+    pub starred: bool,
+    pub success: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SkillsQuery {
     pub q: Option<String>,
 }
@@ -100,6 +117,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/health", get(health_handler))
         .route("/api/cached", get(cached_repos_handler))
         .route("/api/skills", get(skills_handler))
+        .route("/api/starred", get(starred_skills_handler))
+        .route("/api/star", post(star_skill_handler))
+        .route("/api/skills/star", post(star_skill_handler))
         .route("/api/scan", post(scan_post_handler).get(scan_get_handler))
         .route(
             "/api/similar",
@@ -186,6 +206,73 @@ async fn skills_handler(
     Ok(Json(SkillsResponse { skills, total }))
 }
 
+async fn starred_skills_handler(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SkillsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db_path = state.default_options.db_path.as_deref();
+    let conn = open_db(db_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to open database: {}", e),
+            }),
+        )
+    })?;
+
+    let skills = crate::storage::get_starred_skills(&conn).unwrap_or_default();
+    let total = skills.len();
+    Ok(Json(SkillsResponse { skills, total }))
+}
+
+async fn star_skill_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<StarPayload>,
+) -> Result<Json<StarResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db_path = state.default_options.db_path.as_deref();
+    let conn = open_db(db_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to open database: {}", e),
+            }),
+        )
+    })?;
+
+    let dummy_skill = crate::scanner::Skill {
+        name: payload.name.unwrap_or_else(|| "skill".to_string()),
+        description: payload.description.unwrap_or_default(),
+        path: payload.path.unwrap_or_default(),
+        url: payload.url.clone(),
+        starred: false,
+    };
+
+    let new_status = if let Some(st) = payload.starred {
+        crate::storage::set_skill_starred(&conn, &dummy_skill, st).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to update star: {}", e),
+                }),
+            )
+        })?
+    } else {
+        crate::storage::toggle_skill_starred(&conn, &dummy_skill).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to toggle star: {}", e),
+                }),
+            )
+        })?
+    };
+
+    Ok(Json(StarResponse {
+        url: payload.url,
+        starred: new_status,
+        success: true,
+    }))
+}
+
 async fn execute_scan(
     payload: ScanPayload,
     state: &AppState,
@@ -247,16 +334,59 @@ async fn execute_scan(
     };
 
     if raw_targets.len() == 1 {
-        let repo = &raw_targets[0];
-        let mut scan_result = scan_github_repo(repo, &scan_opts).await.map_err(|err| {
-            let status = match err {
-                crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
-                crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
-                crate::scanner::ScannerError::Forbidden(_, _, _) => StatusCode::FORBIDDEN,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            (status, err.to_string())
-        })?;
+        let target_str = &raw_targets[0];
+        let parsed = parse_scan_target(target_str);
+
+        let mut scan_result = match parsed {
+            Ok(ScanTarget::Org { org }) => {
+                let org_results = scan_github_org(&org, &scan_opts).await.map_err(|err| {
+                    let status = match err {
+                        crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
+                        crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
+                        crate::scanner::ScannerError::Forbidden(_, _, _) => StatusCode::FORBIDDEN,
+                        _ => StatusCode::INTERNAL_SERVER_ERROR,
+                    };
+                    (status, err.to_string())
+                })?;
+
+                let mut all_skills = Vec::new();
+                let mut any_from_cache = true;
+                let mut any_truncated = false;
+                for res in org_results {
+                    if !res.from_cache {
+                        any_from_cache = false;
+                    }
+                    if res.truncated {
+                        any_truncated = true;
+                    }
+                    all_skills.extend(res.skills);
+                }
+
+                ScanResult {
+                    owner: org,
+                    repo: "all-repositories".to_string(),
+                    branch: scan_opts
+                        .branch
+                        .clone()
+                        .unwrap_or_else(|| "HEAD".to_string()),
+                    skills: all_skills,
+                    from_cache: any_from_cache,
+                    commit_sha: None,
+                    truncated: any_truncated,
+                }
+            }
+            _ => scan_github_repo(target_str, &scan_opts)
+                .await
+                .map_err(|err| {
+                    let status = match err {
+                        crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
+                        crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
+                        crate::scanner::ScannerError::Forbidden(_, _, _) => StatusCode::FORBIDDEN,
+                        _ => StatusCode::INTERNAL_SERVER_ERROR,
+                    };
+                    (status, err.to_string())
+                })?,
+        };
 
         if let Some(f) = payload.filter {
             if !f.trim().is_empty() {
@@ -273,33 +403,54 @@ async fn execute_scan(
         let mut any_from_cache = true;
         let mut any_truncated = false;
 
-        for repo in &raw_targets {
-            match scan_github_repo(repo, &scan_opts).await {
-                Ok(mut res) => {
-                    last_owner = res.owner;
-                    last_repo = res.repo;
-                    last_branch = res.branch;
-                    if !res.from_cache {
-                        any_from_cache = false;
-                    }
-                    if res.truncated {
-                        any_truncated = true;
-                    }
-                    all_skills.append(&mut res.skills);
-                }
-                Err(err) => {
-                    if raw_targets.len() == 1 {
-                        let status = match err {
-                            crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
-                            crate::scanner::ScannerError::NotFound(_, _) => StatusCode::NOT_FOUND,
-                            crate::scanner::ScannerError::Forbidden(_, _, _) => {
-                                StatusCode::FORBIDDEN
+        for target_str in &raw_targets {
+            let parsed = parse_scan_target(target_str);
+            match parsed {
+                Ok(ScanTarget::Org { org }) => {
+                    if let Ok(org_results) = scan_github_org(&org, &scan_opts).await {
+                        for mut r in org_results {
+                            last_owner = r.owner;
+                            last_repo = r.repo;
+                            last_branch = r.branch;
+                            if !r.from_cache {
+                                any_from_cache = false;
                             }
-                            _ => StatusCode::INTERNAL_SERVER_ERROR,
-                        };
-                        return Err((status, err.to_string()));
+                            if r.truncated {
+                                any_truncated = true;
+                            }
+                            all_skills.append(&mut r.skills);
+                        }
                     }
                 }
+                _ => match scan_github_repo(target_str, &scan_opts).await {
+                    Ok(mut res) => {
+                        last_owner = res.owner;
+                        last_repo = res.repo;
+                        last_branch = res.branch;
+                        if !res.from_cache {
+                            any_from_cache = false;
+                        }
+                        if res.truncated {
+                            any_truncated = true;
+                        }
+                        all_skills.append(&mut res.skills);
+                    }
+                    Err(err) => {
+                        if raw_targets.len() == 1 {
+                            let status = match err {
+                                crate::scanner::ScannerError::Parse(_) => StatusCode::BAD_REQUEST,
+                                crate::scanner::ScannerError::NotFound(_, _) => {
+                                    StatusCode::NOT_FOUND
+                                }
+                                crate::scanner::ScannerError::Forbidden(_, _, _) => {
+                                    StatusCode::FORBIDDEN
+                                }
+                                _ => StatusCode::INTERNAL_SERVER_ERROR,
+                            };
+                            return Err((status, err.to_string()));
+                        }
+                    }
+                },
             }
         }
 

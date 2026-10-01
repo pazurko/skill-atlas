@@ -1,4 +1,65 @@
-use skill_atlas::parser::{parse_repo_identifier, ParseError, RepoIdentifier};
+use skill_atlas::parser::{
+    parse_repo_identifier, parse_scan_target, ParseError, RepoIdentifier, ScanTarget,
+};
+
+#[test]
+fn test_parse_scan_target_repos_and_orgs() {
+    // 1. Repo shorthand
+    assert_eq!(
+        parse_scan_target("openai/swarm").unwrap(),
+        ScanTarget::Repo {
+            owner: "openai".to_string(),
+            repo: "swarm".to_string()
+        }
+    );
+
+    // 2. Org with org: prefix
+    assert_eq!(
+        parse_scan_target("org:JetBrains").unwrap(),
+        ScanTarget::Org {
+            org: "JetBrains".to_string()
+        }
+    );
+
+    // 3. Org with @ prefix
+    assert_eq!(
+        parse_scan_target("@openai").unwrap(),
+        ScanTarget::Org {
+            org: "openai".to_string()
+        }
+    );
+
+    // 4. Org with org/ prefix
+    assert_eq!(
+        parse_scan_target("org/google").unwrap(),
+        ScanTarget::Org {
+            org: "google".to_string()
+        }
+    );
+
+    // 5. Org GitHub URL
+    assert_eq!(
+        parse_scan_target("https://github.com/JetBrains").unwrap(),
+        ScanTarget::Org {
+            org: "JetBrains".to_string()
+        }
+    );
+    assert_eq!(
+        parse_scan_target("https://github.com/JetBrains/").unwrap(),
+        ScanTarget::Org {
+            org: "JetBrains".to_string()
+        }
+    );
+
+    // 6. Repo GitHub URL
+    assert_eq!(
+        parse_scan_target("https://github.com/JetBrains/kotlin").unwrap(),
+        ScanTarget::Repo {
+            owner: "JetBrains".to_string(),
+            repo: "kotlin".to_string()
+        }
+    );
+}
 
 #[test]
 fn test_parse_shorthand() {

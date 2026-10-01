@@ -63,6 +63,7 @@ fn test_calculate_similarity_identical_and_duplicates() {
         path: ".claude/skills/code-review/SKILL.md".to_string(),
         url: "https://github.com/org/repo/blob/main/.claude/skills/code-review/SKILL.md"
             .to_string(),
+        starred: false,
     };
 
     let skill_b = Skill {
@@ -71,6 +72,7 @@ fn test_calculate_similarity_identical_and_duplicates() {
         path: "plugins/mcp/skills/code-review/SKILL.md".to_string(),
         url: "https://github.com/org/repo/blob/main/plugins/mcp/skills/code-review/SKILL.md"
             .to_string(),
+        starred: false,
     };
 
     let sim = calculate_similarity(&skill_a, &skill_b);
@@ -85,6 +87,7 @@ fn test_calculate_similarity_high_relatedness() {
         path: "skills/build-bump-gradle-version/SKILL.md".to_string(),
         url: "https://github.com/org/repo/blob/main/skills/build-bump-gradle-version/SKILL.md"
             .to_string(),
+        starred: false,
     };
 
     let skill_b = Skill {
@@ -93,6 +96,7 @@ fn test_calculate_similarity_high_relatedness() {
         path: "skills/build-tools-bump-gradle-api/SKILL.md".to_string(),
         url: "https://github.com/org/repo/blob/main/skills/build-tools-bump-gradle-api/SKILL.md"
             .to_string(),
+        starred: false,
     };
 
     let sim = calculate_similarity(&skill_a, &skill_b);
@@ -110,6 +114,7 @@ fn test_calculate_similarity_unrelated() {
         description: "Perform git pull request code reviews.".to_string(),
         path: "skills/code-review/SKILL.md".to_string(),
         url: "https://github.com/org/repo/blob/main/skills/code-review/SKILL.md".to_string(),
+        starred: false,
     };
 
     let skill_b = Skill {
@@ -117,6 +122,7 @@ fn test_calculate_similarity_unrelated() {
         description: "Provision AWS EKS kubernetes cluster with terraform.".to_string(),
         path: "infra/k8s/skill.yaml".to_string(),
         url: "https://github.com/org/repo/blob/main/infra/k8s/skill.yaml".to_string(),
+        starred: false,
     };
 
     let sim = calculate_similarity(&skill_a, &skill_b);
@@ -135,18 +141,21 @@ fn test_find_similar_skills_and_pairs() {
             description: "Review pull requests and code changes.".to_string(),
             path: ".agents/skills/code-review/SKILL.md".to_string(),
             url: "https://github.com/o/r/blob/m/.agents/skills/code-review/SKILL.md".to_string(),
+            starred: false,
         },
         Skill {
             name: "deploy-k8s".to_string(),
             description: "Deploy services to kubernetes cluster.".to_string(),
             path: ".agents/skills/deploy-k8s/SKILL.md".to_string(),
             url: "https://github.com/o/r/blob/m/.agents/skills/deploy-k8s/SKILL.md".to_string(),
+            starred: false,
         },
         Skill {
             name: "code-review".to_string(),
             description: "Review pull requests and code changes in plugins.".to_string(),
             path: "plugins/skills/code-review/SKILL.md".to_string(),
             url: "https://github.com/o/r/blob/m/plugins/skills/code-review/SKILL.md".to_string(),
+            starred: false,
         },
     ];
 
@@ -170,18 +179,21 @@ fn test_filter_skills() {
             description: "Bumps gradle wrapper version.".to_string(),
             path: "skills/gradle/SKILL.md".to_string(),
             url: "https://github.com/o/r/blob/m/skills/gradle/SKILL.md".to_string(),
+            starred: true,
         },
         Skill {
             name: "code-review".to_string(),
             description: "Review pull requests and KT fixes.".to_string(),
             path: ".claude/skills/review/SKILL.md".to_string(),
             url: "https://github.com/o/r/blob/m/.claude/skills/review/SKILL.md".to_string(),
+            starred: false,
         },
         Skill {
             name: "deploy-app".to_string(),
             description: "Deploy to cloud production.".to_string(),
             path: "deploy/skill.yaml".to_string(),
             url: "https://github.com/o/r/blob/m/deploy/skill.yaml".to_string(),
+            starred: false,
         },
     ];
 
@@ -208,6 +220,14 @@ fn test_filter_skills() {
     let multi = filter_skills(&skills, "bump gradle");
     assert_eq!(multi.len(), 1);
     assert_eq!(multi[0].name, "build-bump-gradle");
+
+    // Filter by starred status
+    let starred_only = filter_skills(&skills, "status:starred");
+    assert_eq!(starred_only.len(), 1);
+    assert_eq!(starred_only[0].name, "build-bump-gradle");
+
+    let is_starred = filter_skills(&skills, "is:starred");
+    assert_eq!(is_starred.len(), 1);
 
     // No match
     let nomatch = filter_skills(&skills, "nonexistent");

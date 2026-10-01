@@ -1,6 +1,7 @@
 use crate::history::OpenHistory;
 use crate::interactive::present_skills;
-use crate::scanner::{scan_github_repo, ScanResult, ScannerOptions, Skill};
+use crate::parser::{parse_scan_target, ScanTarget};
+use crate::scanner::{scan_github_org, scan_github_repo, ScanResult, ScannerOptions, Skill};
 use colored::*;
 use crossterm::{
     cursor, execute,
@@ -26,6 +27,12 @@ pub enum ReplCommand {
     Rescan,
     /// Show the skills of the last scan again.
     List,
+    /// Show all starred/bookmarked skills.
+    Starred,
+    /// Star/bookmark a skill by number or name.
+    Star(String),
+    /// Unstar a skill by number or name.
+    Unstar(String),
     /// Filter skills by keyword query across name, description, or path.
     Filter(Option<String>),
     /// Discover similar skills based on heuristics and similarity percentages.
@@ -49,6 +56,8 @@ pub enum ReplCommand {
 pub const SCAN_USAGE: &str =
     "Usage: scan <githubrepo>... [--branch <BRANCH>] [--refresh] [--filter <QUERY>]";
 pub const OPEN_USAGE: &str = "Usage: open <number|name>";
+pub const STAR_USAGE: &str = "Usage: star <number|name>";
+pub const UNSTAR_USAGE: &str = "Usage: unstar <number|name>";
 pub const WEB_USAGE: &str = "Usage: web [--port <PORT>] [--no-open]";
 pub const FILTER_USAGE: &str = "Usage: filter [query|clear]";
 pub const SIMILAR_USAGE: &str = "Usage: similar [<number|name>]";
@@ -65,6 +74,21 @@ pub fn parse_command(line: &str) -> ReplCommand {
         "exit" | "quit" | "q" => ReplCommand::Exit,
         "help" | "?" => ReplCommand::Help,
         "clear" | "cls" => ReplCommand::Clear,
+        "starred" | "stars" | "bookmarks" => ReplCommand::Starred,
+        "star" => {
+            if args.is_empty() {
+                ReplCommand::Starred
+            } else {
+                ReplCommand::Star(args.join(" "))
+            }
+        }
+        "unstar" => {
+            if args.is_empty() {
+                ReplCommand::Invalid(UNSTAR_USAGE.to_string())
+            } else {
+                ReplCommand::Unstar(args.join(" "))
+            }
+        }
         "list" | "ls" => {
             if args.is_empty() {
                 ReplCommand::List
@@ -134,7 +158,10 @@ fn parse_web_args(args: &[&str]) -> ReplCommand {
 }
 
 fn looks_like_repo(token: &str) -> bool {
-    token.contains('/') || token.starts_with("git@")
+    token.contains('/')
+        || token.starts_with("git@")
+        || token.starts_with("org:")
+        || token.starts_with('@')
 }
 
 fn parse_scan_args(args: &[&str]) -> ReplCommand {
@@ -281,80 +308,177 @@ impl ReplSession {
         options.no_cache = options.no_cache || refresh;
 
         if repos.len() == 1 {
-            let repo = &repos[0];
-            writeln!(
-                out,
-                "{}",
-                format!(
-                    "\n🔍 Scanning repository {} for agent skills...",
-                    repo.bold()
-                )
-                .cyan()
-            )?;
-            out.flush()?;
+            let target_str = &repos[0];
+            let parsed_target = parse_scan_target(target_str);
 
-            match scan_github_repo(repo, &options).await {
-                Ok(result) => {
-                    if let Some(msg) = cache_message(&result) {
-                        writeln!(out, "{}", msg.green())?;
-                    }
-                    if let Some(msg) = truncation_message(&result) {
-                        writeln!(out, "{}", msg.yellow())?;
-                    }
-                    let repo_name = format!("{}/{}", result.owner, result.repo);
-                    self.last_repo = Some(repo.to_string());
-                    self.last_repos = repos.to_vec();
-                    self.last_branch = branch;
-                    self.repo_name = Some(repo_name.clone());
-                    self.skills = result.skills;
-                    self.active_filter = filter;
+            match parsed_target {
+                Ok(ScanTarget::Org { org }) => {
+                    writeln!(
+                        out,
+                        "{}",
+                        format!(
+                            "\n🏢 Discovering repositories for organization {}...",
+                            org.bold()
+                        )
+                        .cyan()
+                    )?;
+                    out.flush()?;
 
-                    let displayed = if let Some(f) = &self.active_filter {
-                        crate::similarity::filter_skills(&self.skills, f)
-                    } else {
-                        self.skills.clone()
-                    };
+                    match scan_github_org(&org, &options).await {
+                        Ok(scan_results) => {
+                            let mut all_skills = Vec::new();
+                            for r in &scan_results {
+                                if let Some(msg) = cache_message(r) {
+                                    writeln!(out, " • {}/{} {}", r.owner, r.repo, msg.green())?;
+                                }
+                                if let Some(msg) = truncation_message(r) {
+                                    writeln!(out, " • {}/{} {}", r.owner, r.repo, msg.yellow())?;
+                                }
+                                all_skills.extend(r.skills.clone());
+                            }
+                            let org_title = format!(
+                                "Organization: {} ({} repos, {} skills)",
+                                org,
+                                scan_results.len(),
+                                all_skills.len()
+                            );
+                            self.last_repo = Some(target_str.to_string());
+                            self.last_repos = repos.to_vec();
+                            self.last_branch = branch;
+                            self.repo_name = Some(org_title.clone());
+                            self.skills = all_skills;
+                            self.active_filter = filter;
 
-                    if self.skills.is_empty() {
-                        writeln!(
-                            out,
-                            "{}",
-                            format!("\nNo agent skills found in {}.\n", repo_name.bold()).yellow()
-                        )?;
-                    } else if displayed.is_empty() {
-                        writeln!(
-                            out,
-                            "{}",
-                            format!(
-                                "\nNo agent skills matched filter '{}' (0 of {} skills in {}).\n",
-                                self.active_filter.as_deref().unwrap_or_default(),
-                                self.skills.len(),
-                                repo_name.bold()
-                            )
-                            .yellow()
-                        )?;
-                    } else {
-                        let title = if self.active_filter.is_some() {
-                            format!(
-                                "{} (filtered: {} of {})",
-                                repo_name,
-                                displayed.len(),
-                                self.skills.len()
-                            )
-                        } else {
-                            repo_name
-                        };
-                        ui.show_skills(out, &displayed, &title, &mut self.history)?;
-                        writeln!(
-                            out,
-                            "{}",
-                            "Type 'open <number|name>', 'filter [query]', 'similar', 'list', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
-                                .dimmed()
-                        )?;
+                            let displayed = if let Some(f) = &self.active_filter {
+                                crate::similarity::filter_skills(&self.skills, f)
+                            } else {
+                                self.skills.clone()
+                            };
+
+                            if self.skills.is_empty() {
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    format!(
+                                        "\nNo agent skills found in organization {}.\n",
+                                        org.bold()
+                                    )
+                                    .yellow()
+                                )?;
+                            } else if displayed.is_empty() {
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    format!(
+                                        "\nNo agent skills matched filter '{}' (0 of {} skills in organization {}).\n",
+                                        self.active_filter.as_deref().unwrap_or_default(),
+                                        self.skills.len(),
+                                        org.bold()
+                                    )
+                                    .yellow()
+                                )?;
+                            } else {
+                                let title = if self.active_filter.is_some() {
+                                    format!(
+                                        "{} (filtered: {} of {})",
+                                        org_title,
+                                        displayed.len(),
+                                        self.skills.len()
+                                    )
+                                } else {
+                                    org_title
+                                };
+                                ui.show_skills(out, &displayed, &title, &mut self.history)?;
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    "Type 'open <number|name>', 'star <number|name>', 'filter [query]', 'similar', 'list', 'starred', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
+                                        .dimmed()
+                                )?;
+                            }
+                        }
+                        Err(err) => {
+                            writeln!(out, "{}", format!("\n❌ Error: {}\n", err).red())?;
+                        }
                     }
                 }
-                Err(err) => {
-                    writeln!(out, "{}", format!("\n❌ Error: {}\n", err).red())?;
+                _ => {
+                    writeln!(
+                        out,
+                        "{}",
+                        format!(
+                            "\n🔍 Scanning repository {} for agent skills...",
+                            target_str.bold()
+                        )
+                        .cyan()
+                    )?;
+                    out.flush()?;
+
+                    match scan_github_repo(target_str, &options).await {
+                        Ok(result) => {
+                            if let Some(msg) = cache_message(&result) {
+                                writeln!(out, "{}", msg.green())?;
+                            }
+                            if let Some(msg) = truncation_message(&result) {
+                                writeln!(out, "{}", msg.yellow())?;
+                            }
+                            let repo_name = format!("{}/{}", result.owner, result.repo);
+                            self.last_repo = Some(target_str.to_string());
+                            self.last_repos = repos.to_vec();
+                            self.last_branch = branch;
+                            self.repo_name = Some(repo_name.clone());
+                            self.skills = result.skills;
+                            self.active_filter = filter;
+
+                            let displayed = if let Some(f) = &self.active_filter {
+                                crate::similarity::filter_skills(&self.skills, f)
+                            } else {
+                                self.skills.clone()
+                            };
+
+                            if self.skills.is_empty() {
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    format!("\nNo agent skills found in {}.\n", repo_name.bold())
+                                        .yellow()
+                                )?;
+                            } else if displayed.is_empty() {
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    format!(
+                                        "\nNo agent skills matched filter '{}' (0 of {} skills in {}).\n",
+                                        self.active_filter.as_deref().unwrap_or_default(),
+                                        self.skills.len(),
+                                        repo_name.bold()
+                                    )
+                                    .yellow()
+                                )?;
+                            } else {
+                                let title = if self.active_filter.is_some() {
+                                    format!(
+                                        "{} (filtered: {} of {})",
+                                        repo_name,
+                                        displayed.len(),
+                                        self.skills.len()
+                                    )
+                                } else {
+                                    repo_name
+                                };
+                                ui.show_skills(out, &displayed, &title, &mut self.history)?;
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    "Type 'open <number|name>', 'star <number|name>', 'filter [query]', 'similar', 'list', 'starred', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
+                                        .dimmed()
+                                )?;
+                            }
+                        }
+                        Err(err) => {
+                            writeln!(out, "{}", format!("\n❌ Error: {}\n", err).red())?;
+                        }
+                    }
                 }
             }
         } else {
@@ -371,26 +495,75 @@ impl ReplSession {
 
             let mut all_skills = Vec::new();
 
-            for repo in repos {
-                writeln!(out, "{}", format!(" • Scanning {}...", repo.bold()).cyan())?;
-                out.flush()?;
-
-                match scan_github_repo(repo, &options).await {
-                    Ok(result) => {
-                        if let Some(msg) = cache_message(&result) {
-                            writeln!(out, "   {}", msg.green())?;
-                        }
-                        if let Some(msg) = truncation_message(&result) {
-                            writeln!(out, "   {}", msg.yellow())?;
-                        }
-                        all_skills.extend(result.skills);
-                    }
-                    Err(err) => {
+            for target_str in repos {
+                let parsed_target = parse_scan_target(target_str);
+                match parsed_target {
+                    Ok(ScanTarget::Org { org }) => {
                         writeln!(
                             out,
                             "{}",
-                            format!("   ❌ Error for {}: {}", repo, err).red()
+                            format!(" • Discovering organization {}...", org.bold()).cyan()
                         )?;
+                        out.flush()?;
+                        match scan_github_org(&org, &options).await {
+                            Ok(results) => {
+                                for r in results {
+                                    if let Some(msg) = cache_message(&r) {
+                                        writeln!(
+                                            out,
+                                            "   • {}/{} {}",
+                                            r.owner,
+                                            r.repo,
+                                            msg.green()
+                                        )?;
+                                    }
+                                    if let Some(msg) = truncation_message(&r) {
+                                        writeln!(
+                                            out,
+                                            "   • {}/{} {}",
+                                            r.owner,
+                                            r.repo,
+                                            msg.yellow()
+                                        )?;
+                                    }
+                                    all_skills.extend(r.skills);
+                                }
+                            }
+                            Err(err) => {
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    format!("   ❌ Error for org {}: {}", org, err).red()
+                                )?;
+                            }
+                        }
+                    }
+                    _ => {
+                        writeln!(
+                            out,
+                            "{}",
+                            format!(" • Scanning {}...", target_str.bold()).cyan()
+                        )?;
+                        out.flush()?;
+
+                        match scan_github_repo(target_str, &options).await {
+                            Ok(result) => {
+                                if let Some(msg) = cache_message(&result) {
+                                    writeln!(out, "   {}", msg.green())?;
+                                }
+                                if let Some(msg) = truncation_message(&result) {
+                                    writeln!(out, "   {}", msg.yellow())?;
+                                }
+                                all_skills.extend(result.skills);
+                            }
+                            Err(err) => {
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    format!("   ❌ Error for {}: {}", target_str, err).red()
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -399,7 +572,7 @@ impl ReplSession {
             self.last_repos = repos.to_vec();
             self.last_branch = branch;
             self.repo_name = Some(format!(
-                "Multiple Repositories ({} repos, {} skills)",
+                "Multiple Targets ({} items, {} skills)",
                 repos.len(),
                 all_skills.len()
             ));
@@ -416,14 +589,14 @@ impl ReplSession {
                 writeln!(
                     out,
                     "{}",
-                    "\nNo agent skills found in the scanned repositories.\n".yellow()
+                    "\nNo agent skills found in the scanned targets.\n".yellow()
                 )?;
             } else if displayed.is_empty() {
                 writeln!(
                     out,
                     "{}",
                     format!(
-                        "\nNo agent skills matched filter '{}' (0 of {} skills across {} repositories).\n",
+                        "\nNo agent skills matched filter '{}' (0 of {} skills across {} targets).\n",
                         self.active_filter.as_deref().unwrap_or_default(),
                         self.skills.len(),
                         repos.len()
@@ -433,18 +606,18 @@ impl ReplSession {
             } else {
                 let title = if self.active_filter.is_some() {
                     format!(
-                        "Multiple Repositories (filtered: {} of {})",
+                        "Multiple Targets (filtered: {} of {})",
                         displayed.len(),
                         self.skills.len()
                     )
                 } else {
-                    format!("Multiple Repositories ({} skills)", self.skills.len())
+                    format!("Multiple Targets ({} skills)", self.skills.len())
                 };
                 ui.show_skills(out, &displayed, &title, &mut self.history)?;
                 writeln!(
                     out,
                     "{}",
-                    "Type 'open <number|name>', 'filter [query]', 'similar', 'list', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
+                    "Type 'open <number|name>', 'star <number|name>', 'filter [query]', 'similar', 'list', 'starred', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
                         .dimmed()
                 )?;
             }
@@ -519,6 +692,99 @@ impl ReplSession {
                         "{}",
                         "Nothing to rescan yet. Run 'scan <githubrepo>' first.".yellow()
                     )?;
+                }
+            }
+            ReplCommand::Starred => {
+                let conn = crate::storage::open_db(self.options.db_path.as_deref())
+                    .map_err(|e| io::Error::other(format!("Failed to open DB: {}", e)))?;
+                let starred_skills = crate::storage::get_starred_skills(&conn).unwrap_or_default();
+                if starred_skills.is_empty() {
+                    writeln!(
+                        out,
+                        "{}",
+                        "No starred skills found yet. Use '*' in the menu or 'star <number|name>' to bookmark skills."
+                            .yellow()
+                    )?;
+                } else {
+                    self.skills = starred_skills.clone();
+                    self.repo_name =
+                        Some(format!("Starred Skills ({} skills)", starred_skills.len()));
+                    let title = format!("⭐ Starred Skills ({})", starred_skills.len());
+                    ui.show_skills(out, &starred_skills, &title, &mut self.history)?;
+                }
+            }
+            ReplCommand::Star(query) => {
+                if self.skills.is_empty() {
+                    if let Ok(conn) = crate::storage::open_db(self.options.db_path.as_deref()) {
+                        if let Ok(db_skills) = crate::storage::get_all_cached_skills(&conn) {
+                            if !db_skills.is_empty() {
+                                self.skills = db_skills;
+                                self.repo_name =
+                                    Some("SQLite Database (All Cached Skills)".to_string());
+                            }
+                        }
+                    }
+                }
+                if self.skills.is_empty() {
+                    writeln!(
+                        out,
+                        "{}",
+                        "No skills listed yet in this session. Run 'scan <githubrepo>' first."
+                            .yellow()
+                    )?;
+                } else {
+                    match self.find_skill(&query) {
+                        Ok(skill) => {
+                            let skill = skill.clone();
+                            if let Ok(conn) =
+                                crate::storage::open_db(self.options.db_path.as_deref())
+                            {
+                                let _ = crate::storage::set_skill_starred(&conn, &skill, true);
+                            }
+                            if let Some(s) = self.skills.iter_mut().find(|s| s.url == skill.url) {
+                                s.starred = true;
+                            }
+                            writeln!(out, "{} Starred '{}'", "⭐".yellow(), skill.name.bold())?;
+                        }
+                        Err(msg) => writeln!(out, "{}", msg.yellow())?,
+                    }
+                }
+            }
+            ReplCommand::Unstar(query) => {
+                if self.skills.is_empty() {
+                    if let Ok(conn) = crate::storage::open_db(self.options.db_path.as_deref()) {
+                        if let Ok(db_skills) = crate::storage::get_all_cached_skills(&conn) {
+                            if !db_skills.is_empty() {
+                                self.skills = db_skills;
+                                self.repo_name =
+                                    Some("SQLite Database (All Cached Skills)".to_string());
+                            }
+                        }
+                    }
+                }
+                if self.skills.is_empty() {
+                    writeln!(
+                        out,
+                        "{}",
+                        "No skills listed yet in this session. Run 'scan <githubrepo>' first."
+                            .yellow()
+                    )?;
+                } else {
+                    match self.find_skill(&query) {
+                        Ok(skill) => {
+                            let skill = skill.clone();
+                            if let Ok(conn) =
+                                crate::storage::open_db(self.options.db_path.as_deref())
+                            {
+                                let _ = crate::storage::set_skill_starred(&conn, &skill, false);
+                            }
+                            if let Some(s) = self.skills.iter_mut().find(|s| s.url == skill.url) {
+                                s.starred = false;
+                            }
+                            writeln!(out, "{} Unstarred '{}'", "☆".dimmed(), skill.name.bold())?;
+                        }
+                        Err(msg) => writeln!(out, "{}", msg.yellow())?,
+                    }
                 }
             }
             ReplCommand::List => {
@@ -828,13 +1094,22 @@ pub fn write_help<W: Write>(out: &mut W) -> io::Result<()> {
     writeln!(out, "\n{}", "Available commands:".bold())?;
     let rows = [
         (
-            "scan <githubrepo>",
-            "Scan a GitHub repository for AI agent skills",
+            "scan <githubrepo>...",
+            "Scan GitHub repository/organization targets for AI agent skills",
         ),
         (
             "list",
             "Show all cached skills or skills of the current scan",
         ),
+        (
+            "starred",
+            "Show all starred/bookmarked skills from database",
+        ),
+        (
+            "star <number|name>",
+            "Bookmark/star a skill by number or name",
+        ),
+        ("unstar <number|name>", "Remove bookmark/star from a skill"),
         (
             "filter [query|clear]",
             "Filter listed skills by name, description, or path",

@@ -21,6 +21,7 @@ fn test_present_skills_non_interactive_fallback() {
         description: "Test description".to_string(),
         path: "skills/test/SKILL.md".to_string(),
         url: "https://github.com/owner/repo/blob/main/skills/test/SKILL.md".to_string(),
+        starred: false,
     }];
 
     // In non-interactive mode (e.g. CI / test harness), present_skills prints output and exits cleanly
@@ -103,12 +104,34 @@ fn test_menu_empty_list_is_safe() {
     );
 }
 
+#[test]
+fn test_menu_toggle_star_keys() {
+    let none = KeyModifiers::NONE;
+    assert_eq!(
+        handle_menu_key(KeyCode::Char('*'), none, 1, 3),
+        MenuAction::ToggleStar(1)
+    );
+    assert_eq!(
+        handle_menu_key(KeyCode::Char('t'), none, 2, 3),
+        MenuAction::ToggleStar(2)
+    );
+    assert_eq!(
+        handle_menu_key(KeyCode::Char('T'), none, 0, 3),
+        MenuAction::ToggleStar(0)
+    );
+    assert_eq!(
+        handle_menu_key(KeyCode::Char(' '), none, 1, 3),
+        MenuAction::ToggleStar(1)
+    );
+}
+
 fn skill(name: &str, path: &str) -> Skill {
     Skill {
         name: name.to_string(),
         description: format!("{} description", name),
         path: path.to_string(),
         url: format!("https://github.com/owner/repo/blob/main/{}", path),
+        starred: false,
     }
 }
 

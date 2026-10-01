@@ -75,8 +75,20 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             url TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS starred_skills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT NOT NULL UNIQUE,
+            owner TEXT,
+            repo TEXT,
+            path TEXT,
+            name TEXT,
+            description TEXT,
+            starred_at TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_repo_lookup ON repositories(owner, repo, branch);
         CREATE INDEX IF NOT EXISTS idx_skill_repo ON skills(repository_id);
+        CREATE INDEX IF NOT EXISTS idx_starred_skills_url ON starred_skills(url);
         "#,
     )?;
     Ok(())
@@ -111,18 +123,22 @@ pub fn get_cached_repository(
 
     if let Some(cached_repo) = repo_opt {
         let mut skill_stmt = conn.prepare(
-            "SELECT name, description, path, url 
-             FROM skills 
-             WHERE repository_id = ?1 
-             ORDER BY LOWER(name) ASC",
+            "SELECT s.name, s.description, s.path, s.url,
+                    CASE WHEN st.id IS NOT NULL THEN 1 ELSE 0 END AS starred
+             FROM skills s
+             LEFT JOIN starred_skills st ON s.url = st.url
+             WHERE s.repository_id = ?1 
+             ORDER BY LOWER(s.name) ASC",
         )?;
 
         let skill_iter = skill_stmt.query_map(params![cached_repo.id], |row| {
+            let starred_num: i64 = row.get(4)?;
             Ok(Skill {
                 name: row.get(0)?,
                 description: row.get(1)?,
                 path: row.get(2)?,
                 url: row.get(3)?,
+                starred: starred_num == 1,
             })
         })?;
 
@@ -225,18 +241,22 @@ pub fn list_all_cached_repositories(conn: &Connection) -> Result<Vec<CachedRepo>
 /// Retrieves all cached skills across all repositories stored in the database.
 pub fn get_all_cached_skills(conn: &Connection) -> Result<Vec<Skill>> {
     let mut stmt = conn.prepare(
-        "SELECT s.name, s.description, s.path, s.url 
+        "SELECT s.name, s.description, s.path, s.url,
+                CASE WHEN st.id IS NOT NULL THEN 1 ELSE 0 END AS starred
          FROM skills s 
          JOIN repositories r ON s.repository_id = r.id 
+         LEFT JOIN starred_skills st ON s.url = st.url
          ORDER BY LOWER(r.owner) ASC, LOWER(r.repo) ASC, LOWER(s.name) ASC",
     )?;
 
     let skill_iter = stmt.query_map([], |row| {
+        let starred_num: i64 = row.get(4)?;
         Ok(Skill {
             name: row.get(0)?,
             description: row.get(1)?,
             path: row.get(2)?,
             url: row.get(3)?,
+            starred: starred_num == 1,
         })
     })?;
 
@@ -247,7 +267,72 @@ pub fn get_all_cached_skills(conn: &Connection) -> Result<Vec<Skill>> {
     Ok(skills)
 }
 
-/// Clears all cached repository and skill data.
+/// Checks if a skill URL is starred in SQLite.
+pub fn is_skill_starred(conn: &Connection, url: &str) -> Result<bool> {
+    let mut stmt = conn.prepare("SELECT 1 FROM starred_skills WHERE url = ?1 LIMIT 1")?;
+    let exists = stmt.exists(params![url])?;
+    Ok(exists)
+}
+
+/// Sets the starred status of a skill in SQLite.
+pub fn set_skill_starred(conn: &Connection, skill: &Skill, starred: bool) -> Result<bool> {
+    if starred {
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            r#"
+            INSERT INTO starred_skills (url, name, description, path, starred_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(url) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                path = excluded.path
+            "#,
+            params![skill.url, skill.name, skill.description, skill.path, now],
+        )?;
+        Ok(true)
+    } else {
+        conn.execute(
+            "DELETE FROM starred_skills WHERE url = ?1",
+            params![skill.url],
+        )?;
+        Ok(false)
+    }
+}
+
+/// Toggles the starred status of a skill in SQLite and returns the new status.
+pub fn toggle_skill_starred(conn: &Connection, skill: &Skill) -> Result<bool> {
+    let currently_starred = is_skill_starred(conn, &skill.url)?;
+    let new_status = !currently_starred;
+    set_skill_starred(conn, skill, new_status)?;
+    Ok(new_status)
+}
+
+/// Retrieves all starred skills across repositories.
+pub fn get_starred_skills(conn: &Connection) -> Result<Vec<Skill>> {
+    let mut stmt = conn.prepare(
+        "SELECT st.name, st.description, st.path, st.url 
+         FROM starred_skills st 
+         ORDER BY LOWER(st.name) ASC",
+    )?;
+
+    let skill_iter = stmt.query_map([], |row| {
+        Ok(Skill {
+            name: row.get(0)?,
+            description: row.get(1)?,
+            path: row.get(2)?,
+            url: row.get(3)?,
+            starred: true,
+        })
+    })?;
+
+    let mut skills = Vec::new();
+    for skill in skill_iter {
+        skills.push(skill?);
+    }
+    Ok(skills)
+}
+
+/// Clears all cached repository and skill data (preserves starred skills unless explicitly requested).
 pub fn clear_cache(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM skills", [])?;
     conn.execute("DELETE FROM repositories", [])?;

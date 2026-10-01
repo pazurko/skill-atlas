@@ -334,7 +334,7 @@ pub fn find_all_similar_pairs(skills: &[Skill], min_pct: f64) -> Vec<SimilarPair
     pairs
 }
 
-/// Filters skills matching query terms across name, description, or file path.
+/// Filters skills matching query terms across name, description, file path, or status.
 pub fn filter_skills(skills: &[Skill], query: &str) -> Vec<Skill> {
     let query_clean = query.trim();
     if query_clean.is_empty() {
@@ -353,6 +353,20 @@ pub fn filter_skills(skills: &[Skill], query: &str) -> Vec<Skill> {
             let path_lower = skill.path.to_lowercase();
 
             terms.iter().all(|term| {
+                if term == "status:starred"
+                    || term == "is:starred"
+                    || term == "starred:true"
+                    || term == "starred:yes"
+                {
+                    return skill.starred;
+                }
+                if term == "status:unstarred"
+                    || term == "is:unstarred"
+                    || term == "starred:false"
+                    || term == "starred:no"
+                {
+                    return !skill.starred;
+                }
                 name_lower.contains(term) || desc_lower.contains(term) || path_lower.contains(term)
             })
         })

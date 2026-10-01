@@ -54,6 +54,10 @@ pub enum Commands {
     /// List all cached skills from the local SQLite database
     #[command(alias = "ls")]
     List,
+
+    /// List all starred/bookmarked skills from the local SQLite database
+    #[command(alias = "star", alias = "stars", alias = "bookmarks")]
+    Starred,
 }
 
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
@@ -104,6 +108,32 @@ pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let title = format!("SQLite Database ({} cached skills)", skills.len());
+            if is_tty() {
+                present_skills(
+                    &skills,
+                    Some(&title),
+                    false,
+                    &mut crate::history::OpenHistory::new(),
+                )?;
+            } else {
+                write_skill_list(&mut io::stdout(), &skills, &title)?;
+            }
+            Ok(())
+        }
+        Some(Commands::Starred) => {
+            let conn = crate::storage::open_db(None)?;
+            let skills = crate::storage::get_starred_skills(&conn)?;
+
+            if skills.is_empty() {
+                println!(
+                    "{}",
+                    "No starred skills found in SQLite database yet. Use '*' in the interactive menu or 'star <number|name>' to bookmark skills."
+                        .yellow()
+                );
+                return Ok(());
+            }
+
+            let title = format!("⭐ Starred Skills ({} skills)", skills.len());
             if is_tty() {
                 present_skills(
                     &skills,
@@ -356,20 +386,47 @@ async fn scan_and_present_multiple(targets: &[String]) -> Result<(), Box<dyn std
     let mut all_skills = Vec::new();
 
     for target in targets {
-        println!("{}", format!(" • Scanning {}...", target.bold()).cyan());
-
-        match scan_github_repo(target, &options).await {
-            Ok(result) => {
-                if let Some(msg) = cache_message(&result) {
-                    println!("   {}", msg.green());
+        let parsed = crate::parser::parse_scan_target(target);
+        match parsed {
+            Ok(crate::parser::ScanTarget::Org { org }) => {
+                println!(
+                    "{}",
+                    format!(" • Discovering organization {}...", org.bold()).cyan()
+                );
+                match crate::scanner::scan_github_org(&org, &options).await {
+                    Ok(results) => {
+                        for r in results {
+                            if let Some(msg) = cache_message(&r) {
+                                println!("   • {}/{} {}", r.owner, r.repo, msg.green());
+                            }
+                            if let Some(msg) = truncation_message(&r) {
+                                println!("   • {}/{} {}", r.owner, r.repo, msg.yellow());
+                            }
+                            all_skills.extend(r.skills);
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("{}", format!("   ❌ Error for org {}: {}", org, err).red());
+                    }
                 }
-                if let Some(msg) = truncation_message(&result) {
-                    println!("   {}", msg.yellow());
-                }
-                all_skills.extend(result.skills);
             }
-            Err(err) => {
-                eprintln!("{}", format!("   ❌ Error for {}: {}", target, err).red());
+            _ => {
+                println!("{}", format!(" • Scanning {}...", target.bold()).cyan());
+
+                match scan_github_repo(target, &options).await {
+                    Ok(result) => {
+                        if let Some(msg) = cache_message(&result) {
+                            println!("   {}", msg.green());
+                        }
+                        if let Some(msg) = truncation_message(&result) {
+                            println!("   {}", msg.yellow());
+                        }
+                        all_skills.extend(result.skills);
+                    }
+                    Err(err) => {
+                        eprintln!("{}", format!("   ❌ Error for {}: {}", target, err).red());
+                    }
+                }
             }
         }
     }
@@ -377,12 +434,12 @@ async fn scan_and_present_multiple(targets: &[String]) -> Result<(), Box<dyn std
     if all_skills.is_empty() {
         println!(
             "{}",
-            "\nNo agent skills found in the scanned repositories.\n".yellow()
+            "\nNo agent skills found in the scanned targets.\n".yellow()
         );
         return Ok(());
     }
 
-    let title = format!("Multiple Repositories ({} skills)", all_skills.len());
+    let title = format!("Multiple Targets ({} skills)", all_skills.len());
     present_skills(
         &all_skills,
         Some(&title),
@@ -393,50 +450,102 @@ async fn scan_and_present_multiple(targets: &[String]) -> Result<(), Box<dyn std
 }
 
 async fn scan_and_present(githubrepo: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!(
-        "{}",
-        format!(
-            "\n🔍 Scanning repository {} for agent skills...",
-            githubrepo.bold()
-        )
-        .cyan()
-    );
-
     let options = ScannerOptions::default();
+    let parsed = crate::parser::parse_scan_target(githubrepo);
 
-    match scan_github_repo(githubrepo, &options).await {
-        Ok(result) => {
-            if let Some(msg) = cache_message(&result) {
-                println!("{}", msg.green());
-            }
-            if let Some(msg) = truncation_message(&result) {
-                println!("{}", msg.yellow());
-            }
+    match parsed {
+        Ok(crate::parser::ScanTarget::Org { org }) => {
+            println!(
+                "{}",
+                format!(
+                    "\n🏢 Discovering repositories for organization {}...",
+                    org.bold()
+                )
+                .cyan()
+            );
 
-            if result.skills.is_empty() {
-                println!(
-                    "{}",
-                    format!(
-                        "\nNo agent skills found in {}.\n",
-                        format!("{}/{}", result.owner, result.repo).bold()
-                    )
-                    .yellow()
-                );
-                return Ok(());
-            }
+            match crate::scanner::scan_github_org(&org, &options).await {
+                Ok(results) => {
+                    let mut all_skills = Vec::new();
+                    for r in &results {
+                        if let Some(msg) = cache_message(r) {
+                            println!(" • {}/{} {}", r.owner, r.repo, msg.green());
+                        }
+                        if let Some(msg) = truncation_message(r) {
+                            println!(" • {}/{} {}", r.owner, r.repo, msg.yellow());
+                        }
+                        all_skills.extend(r.skills.clone());
+                    }
 
-            let repo_name = format!("{}/{}", result.owner, result.repo);
-            present_skills(
-                &result.skills,
-                Some(&repo_name),
-                false,
-                &mut crate::history::OpenHistory::new(),
-            )?;
-            Ok(())
+                    if all_skills.is_empty() {
+                        println!(
+                            "{}",
+                            format!("\nNo agent skills found in organization {}.\n", org.bold())
+                                .yellow()
+                        );
+                        return Ok(());
+                    }
+
+                    let title = format!("Organization: {} ({} skills)", org, all_skills.len());
+                    present_skills(
+                        &all_skills,
+                        Some(&title),
+                        false,
+                        &mut crate::history::OpenHistory::new(),
+                    )?;
+                    Ok(())
+                }
+                Err(err) => {
+                    eprintln!("{}", format!("\n❌ Error: {}\n", err).red());
+                    std::process::exit(1);
+                }
+            }
         }
-        Err(err) => {
-            eprintln!("{}", format!("\n❌ Error: {}\n", err).red());
-            std::process::exit(1);
+        _ => {
+            println!(
+                "{}",
+                format!(
+                    "\n🔍 Scanning repository {} for agent skills...",
+                    githubrepo.bold()
+                )
+                .cyan()
+            );
+
+            match scan_github_repo(githubrepo, &options).await {
+                Ok(result) => {
+                    if let Some(msg) = cache_message(&result) {
+                        println!("{}", msg.green());
+                    }
+                    if let Some(msg) = truncation_message(&result) {
+                        println!("{}", msg.yellow());
+                    }
+
+                    if result.skills.is_empty() {
+                        println!(
+                            "{}",
+                            format!(
+                                "\nNo agent skills found in {}.\n",
+                                format!("{}/{}", result.owner, result.repo).bold()
+                            )
+                            .yellow()
+                        );
+                        return Ok(());
+                    }
+
+                    let repo_name = format!("{}/{}", result.owner, result.repo);
+                    present_skills(
+                        &result.skills,
+                        Some(&repo_name),
+                        false,
+                        &mut crate::history::OpenHistory::new(),
+                    )?;
+                    Ok(())
+                }
+                Err(err) => {
+                    eprintln!("{}", format!("\n❌ Error: {}\n", err).red());
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }

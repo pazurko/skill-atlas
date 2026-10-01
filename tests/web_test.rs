@@ -74,6 +74,7 @@ async fn test_web_api_skills_endpoint() {
         path: "skills/code-review/SKILL.md".to_string(),
         url: "https://github.com/acme/agent-tools/blob/main/skills/code-review/SKILL.md"
             .to_string(),
+        starred: false,
     };
     let skill2 = Skill {
         name: "test-runner".to_string(),
@@ -81,6 +82,7 @@ async fn test_web_api_skills_endpoint() {
         path: "skills/test-runner/SKILL.md".to_string(),
         url: "https://github.com/acme/agent-tools/blob/main/skills/test-runner/SKILL.md"
             .to_string(),
+        starred: false,
     };
 
     save_cached_repository(
@@ -159,6 +161,7 @@ async fn test_web_api_cached_repositories() {
         description: "Test description.".to_string(),
         path: "SKILL.md".to_string(),
         url: "https://github.com/test-org/test-repo/blob/main/SKILL.md".to_string(),
+        starred: false,
     };
 
     save_cached_repository(
@@ -591,6 +594,146 @@ async fn test_web_api_scan_multiple_repositories() {
     assert_eq!(comma_res.status(), reqwest::StatusCode::OK);
     let comma_result: ScanResult = comma_res.json().await.unwrap();
     assert_eq!(comma_result.skills.len(), 2);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn test_web_api_star_and_starred_endpoints() {
+    let db_path = std::env::temp_dir().join(format!("web_test_star_{}.db", rand_nanos()));
+    let options = ScannerOptions {
+        db_path: Some(db_path.clone()),
+        ..Default::default()
+    };
+
+    let (base_url, _) = spawn_test_app(options).await;
+    let client = reqwest::Client::new();
+
+    // 1. Initially no starred skills
+    let res = client
+        .get(format!("{}/api/starred", base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    let starred_resp: skill_atlas::web::SkillsResponse = res.json().await.unwrap();
+    assert_eq!(starred_resp.total, 0);
+
+    // 2. Star a skill via POST /api/star
+    let star_res = client
+        .post(format!("{}/api/star", base_url))
+        .json(&json!({
+            "url": "https://github.com/acme/repo/blob/main/skills/foo/SKILL.md",
+            "name": "foo-skill",
+            "description": "A starred skill",
+            "path": "skills/foo/SKILL.md",
+            "starred": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(star_res.status(), reqwest::StatusCode::OK);
+    let star_data: skill_atlas::web::StarResponse = star_res.json().await.unwrap();
+    assert!(star_data.starred);
+    assert!(star_data.success);
+
+    // 3. Verify it appears in /api/starred
+    let res2 = client
+        .get(format!("{}/api/starred", base_url))
+        .send()
+        .await
+        .unwrap();
+    let starred_resp2: skill_atlas::web::SkillsResponse = res2.json().await.unwrap();
+    assert_eq!(starred_resp2.total, 1);
+    assert_eq!(starred_resp2.skills[0].name, "foo-skill");
+    assert!(starred_resp2.skills[0].starred);
+
+    // 4. Toggle star to false
+    let unstar_res = client
+        .post(format!("{}/api/star", base_url))
+        .json(&json!({
+            "url": "https://github.com/acme/repo/blob/main/skills/foo/SKILL.md",
+            "starred": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unstar_res.status(), reqwest::StatusCode::OK);
+    let unstar_data: skill_atlas::web::StarResponse = unstar_res.json().await.unwrap();
+    assert!(!unstar_data.starred);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn test_web_api_scan_organization() {
+    let mock_server = MockServer::start().await;
+
+    // Org endpoint: /orgs/acme-org/repos
+    Mock::given(method("GET"))
+        .and(path("/orgs/acme-org/repos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "name": "repo-one", "owner": { "login": "acme-org" }, "archived": false }
+        ])))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/repos/acme-org/repo-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme-org/repo-one/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "sha_org_1" })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme-org/repo-one/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "tree_org_1",
+            "tree": [
+                { "path": "skills/org-skill/SKILL.md", "type": "blob", "sha": "bo1" }
+            ]
+        })))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/acme-org/repo-one/sha_org_1/skills/org-skill/SKILL.md",
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("---\nname: org-skill\ndescription: Discovered from org.\n---\n"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let db_path = std::env::temp_dir().join(format!("web_test_org_{}.db", rand_nanos()));
+    let options = ScannerOptions {
+        base_api_url: Some(mock_server.uri()),
+        base_raw_url: Some(mock_server.uri()),
+        db_path: Some(db_path.clone()),
+        ..Default::default()
+    };
+
+    let (base_url, _) = spawn_test_app(options).await;
+    let client = reqwest::Client::new();
+
+    let post_res = client
+        .post(format!("{}/api/scan", base_url))
+        .json(&json!({
+            "target": "org:acme-org"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(post_res.status(), reqwest::StatusCode::OK);
+    let result: ScanResult = post_res.json().await.unwrap();
+    assert_eq!(result.owner, "acme-org");
+    assert_eq!(result.skills.len(), 1);
+    assert_eq!(result.skills[0].name, "org-skill");
 
     let _ = std::fs::remove_file(db_path);
 }

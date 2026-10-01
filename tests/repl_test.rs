@@ -512,6 +512,7 @@ async fn test_session_list_loads_from_sqlite_database() {
         description: "From database".to_string(),
         path: "skills/test/SKILL.md".to_string(),
         url: "https://github.com/test/repo/blob/main/skills/test/SKILL.md".to_string(),
+        starred: false,
     }];
     skill_atlas::storage::save_cached_repository(
         &mut conn,
@@ -583,6 +584,64 @@ async fn test_session_warns_when_tree_is_truncated() {
     assert!(out.contains("results may be incomplete"));
     assert_eq!(ui.shown.len(), 1);
     let _ = std::fs::remove_file(db);
+}
+
+#[test]
+fn test_parse_star_and_starred_commands() {
+    assert_eq!(parse_command("starred"), ReplCommand::Starred);
+    assert_eq!(parse_command("stars"), ReplCommand::Starred);
+    assert_eq!(parse_command("bookmarks"), ReplCommand::Starred);
+    assert_eq!(parse_command("star"), ReplCommand::Starred);
+    assert_eq!(parse_command("star 1"), ReplCommand::Star("1".to_string()));
+    assert_eq!(
+        parse_command("star my-skill"),
+        ReplCommand::Star("my-skill".to_string())
+    );
+    assert_eq!(
+        parse_command("unstar 1"),
+        ReplCommand::Unstar("1".to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_session_star_and_unstar_commands() {
+    let temp_db = std::env::temp_dir().join(format!("test_repl_db_star_{}.db", rand_nanos()));
+    let mut conn = skill_atlas::storage::open_db(Some(&temp_db)).unwrap();
+    let skills = vec![Skill {
+        name: "test-star-skill".to_string(),
+        description: "Star me".to_string(),
+        path: "skills/star/SKILL.md".to_string(),
+        url: "https://github.com/test/repo/blob/main/skills/star/SKILL.md".to_string(),
+        starred: false,
+    }];
+    skill_atlas::storage::save_cached_repository(
+        &mut conn,
+        "test",
+        "repo",
+        "main",
+        Some("sha_db"),
+        None,
+        &skills,
+    )
+    .unwrap();
+
+    let options = ScannerOptions {
+        db_path: Some(temp_db.clone()),
+        ..Default::default()
+    };
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi::default();
+    let out = run_script(
+        &mut session,
+        &mut ui,
+        "list\nstar 1\nstarred\nunstar 1\nexit\n",
+    )
+    .await;
+
+    assert!(out.contains("Starred 'test-star-skill'"));
+    assert!(out.contains("Unstarred 'test-star-skill'"));
+
+    let _ = std::fs::remove_file(temp_db);
 }
 
 #[test]

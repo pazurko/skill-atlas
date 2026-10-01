@@ -6,11 +6,17 @@ Skill Atlas is an interactive CLI designed to maximize developer efficiency and 
 ## Core Command & Usage
 
 ```bash
-# Scan a single repository or multiple repositories for AI agent skills
+# Scan a single repository, multiple repositories, or entire organizations for AI agent skills
 skill-atlas scan <githubrepo>...
+# e.g. skill-atlas scan JetBrains/kotlin openai/swarm
+# e.g. skill-atlas scan org:JetBrains
+# e.g. skill-atlas scan https://github.com/JetBrains
 
 # List all cached skills from local SQLite database
 skill-atlas list
+
+# List all starred (bookmarked) skills from local SQLite database
+skill-atlas starred
 
 # Filter cached skills by keyword query
 skill-atlas filter <query>
@@ -26,8 +32,9 @@ skill-atlas
 ```
 
 ### Core Commands & Arguments
-- `scan <githubrepo>...`: Target repository identifier(s) or URL(s) (e.g., `owner/repo`, `https://github.com/owner/repo`, `git@github.com:...`, or space/comma-separated lists such as `openai/swarm JetBrains/kotlin` or `"openai/swarm, JetBrains/kotlin"`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed.
+- `scan <githubrepo>...`: Target repository identifier(s), organization(s), or URL(s) (e.g., `owner/repo`, `org:owner`, `https://github.com/owner`, `https://github.com/owner/repo`, `git@github.com:...`, or space/comma-separated lists such as `openai/swarm JetBrains/kotlin` or `"org:JetBrains, openai/swarm"`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed.
 - `list` (alias `ls`): Load and display all cached skills across all repositories stored in the local SQLite database (`~/.skill-atlas/skills.db`).
+- `starred` (alias `star`, `stars`, `bookmarks`): Load and display all starred/bookmarked skills stored in the local SQLite database.
 - `filter [query]` (alias `f`): Filter skills by keyword query across name, description, or file path.
 - `similar [target]`: Find similar skills based on heuristics and similarity percentages (threshold >= 30.0%). Without arguments, lists all detected similar pairs. With a target skill, lists all skills similar to that target.
 - `web` (alias `serve`): Start the localhost web interface on port 3000 (`-p, --port <PORT>`, `--no-open`).
@@ -88,10 +95,10 @@ JetBrains/kotlin 6 skills
 
 3. **Interactive Selection List**:
    - Outputs the discovered skills in a clean, terminal-rendered interactive menu displaying skill names, paths, and descriptions.
-   - **Navigation**:
+   - **Navigation & Actions**:
      - `↑` / `↓` (or `k` / `j`): Move selection cursor between identified skills.
-   - **Action**:
      - `Enter`: Open the selected skill's GitHub definition in the default web browser. The menu stays open and shows a status line, so several skills can be opened in a row. The status line is kept while navigating (it only changes on the next open).
+     - `*` / `t` / `Space`: Toggle star/bookmark status for the currently selected skill in local SQLite storage.
      - `s` / `S`: Show similarity information and the most similar counterpart skill with similarity percentage for the currently selected skill.
    - **Opened history (audit)**: every open attempt (from the menu or `open`) is recorded for the whole session, across repositories, with local time (`HH:MM:SS`), `owner/repo`, skill name and URL; failed browser launches are recorded as `✗ ... (failed: <error>)`. Skills opened successfully are marked `✓ opened` in the menu, and the menu shows the 5 most recent entries below the key hints under `Opened in this session (N, 'history' at the prompt shows all):`. A one-shot `scan` outside a session keeps the history only while the menu is open.
      - `q` / `Esc` / `Ctrl+C`: Leave the menu and return to the `skill-atlas>` prompt.
@@ -110,6 +117,9 @@ JetBrains/kotlin 6 skills
      | `scan <githubrepo>... [-b\|--branch <BRANCH>] [--refresh\|--no-cache] [-f\|--filter <QUERY>]` | Scan one or multiple repositories and show the interactive menu. Bare repositories (contains `/` or starts with `git@`) are treated as `scan <repos>`. Missing repository, a missing branch value, or unknown options print `Usage: scan <githubrepo>... [--branch <BRANCH>] [--refresh] [--filter <QUERY>]`. |
      | `rescan` / `refresh` | Re-scan the last successfully scanned repository or repositories (same branch), bypassing the cache. Without a previous scan: `Nothing to rescan yet. Run 'scan <githubrepo>' first.` |
      | `list` / `ls` | Show the skills of the last scan again in the menu (respecting any active filter). |
+     | `starred` / `stars` / `bookmarks` | Show all starred skills from the SQLite database. |
+     | `star <number\|name>` | Star/bookmark a skill from the last scan by index or name. |
+     | `unstar <number\|name>` | Unstar a skill from the last scan by index or name. |
      | `filter [query\|clear]` / `f` | Filter current scan results across name, description, or path. Running without arguments or `filter clear` resets the filter. |
      | `similar [<number\|name>]` | Find and report similar skills based on heuristics and similarity percentages (threshold >= 30%). Without arguments, lists all detected similar pairs. With a skill index or name, lists all skills similar to that target. |
      | `open <number\|name>` | Open a skill of the last scan in the browser: 1-based index, else exact case-insensitive name, else first name containing the query. When the matched name is shared by several skills, the first (by path) is opened and `Note: <n> skills are named '<name>'; opened <path>. Use 'open <number>' to pick another.` is printed. Out-of-range index: `Invalid index. Please choose between 1 and N.`; no match: `Skill matching '<query>' not found in recent results.`; no argument: `Usage: open <number\|name>`. |
@@ -142,6 +152,8 @@ JetBrains/kotlin 6 skills
    - **REST API Endpoints**:
      - `GET /`: Serves the embedded HTML/CSS/JavaScript web interface.
      - `GET /api/skills[?q=<query>]`: Retrieves all cached skills from local SQLite database with optional filter query.
+     - `GET /api/starred`: Retrieves all starred skills from local SQLite database.
+     - `POST /api/star` & `POST /api/skills/star`: Toggles or updates star/bookmark status for a skill (`{"url": "...", "starred": bool, "name": "...", "description": "...", "path": "..."}`).
      - `POST /api/scan`: Executes scan for repository or repositories specified in JSON payload `{"repo": "owner/repo", "branch": "HEAD", "refresh": false, "token": "...", "filter": "..."}` or `{"targets": [...]}`.
      - `GET /api/scan?repo=...&branch=...&refresh=...&filter=...`: Executes scan via query parameters.
      - `POST /api/similar`: Returns similar pairs and target skill matches for repository specified in JSON payload `{"repo": "owner/repo", "target": "...", "min_similarity": 30.0}`.

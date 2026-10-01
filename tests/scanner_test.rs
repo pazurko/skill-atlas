@@ -130,6 +130,7 @@ async fn test_scan_github_repo_success_and_caching() {
             path: "skills/calculator/SKILL.md".to_string(),
             url: "https://github.com/acme/agent-skills/blob/main/skills/calculator/SKILL.md"
                 .to_string(),
+            starred: false,
         }
     );
     assert_eq!(
@@ -140,6 +141,7 @@ async fn test_scan_github_repo_success_and_caching() {
             path: "skills/weather/SKILL.md".to_string(),
             url: "https://github.com/acme/agent-skills/blob/main/skills/weather/SKILL.md"
                 .to_string(),
+            starred: false,
         }
     );
 
@@ -328,6 +330,7 @@ async fn test_scan_cached_results_with_stale_main_urls_are_corrected() {
         path: ".claude/skills/cherry-pick/SKILL.md".to_string(),
         url: "https://github.com/jetbrains/kotlin/blob/main/.claude/skills/cherry-pick/SKILL.md"
             .to_string(),
+        starred: false,
     };
     skill_atlas::save_cached_repository(
         &mut conn,
@@ -480,6 +483,107 @@ async fn test_scan_falls_back_to_blob_api_and_reports_truncated_tree() {
     assert_eq!(result.skills[0].name, "deploy");
     assert_eq!(result.skills[0].description, "Deploys it.");
     let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn test_scan_github_org_success() {
+    let server = MockServer::start().await;
+
+    // 1. Mock /orgs/acme/repos
+    Mock::given(method("GET"))
+        .and(path("/orgs/acme/repos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "name": "repo-one", "owner": { "login": "acme" }, "archived": false },
+            { "name": "archived-repo", "owner": { "login": "acme" }, "archived": true }
+        ])))
+        .mount(&server)
+        .await;
+
+    // Repo one details
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "default_branch": "main" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-one/commits/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sha": "sha_1" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/repo-one/git/trees/HEAD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": "tree_1",
+            "tree": [
+                { "path": "skills/skill1/SKILL.md", "type": "blob", "sha": "b1" }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/acme/repo-one/sha_1/skills/skill1/SKILL.md"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("---\nname: skill-one\ndescription: First org skill.\n---\n"),
+        )
+        .mount(&server)
+        .await;
+
+    let db_path = env::temp_dir().join(format!("test_org_scan_{}.db", uuid_or_timestamp()));
+    let options = ScannerOptions {
+        token: None,
+        branch: None,
+        base_api_url: Some(server.uri()),
+        base_raw_url: Some(server.uri()),
+        no_cache: true,
+        db_path: Some(db_path.clone()),
+    };
+
+    let results = skill_atlas::scanner::scan_github_org("acme", &options)
+        .await
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].owner, "acme");
+    assert_eq!(results[0].repo, "repo-one");
+    assert_eq!(results[0].skills.len(), 1);
+    assert_eq!(results[0].skills[0].name, "skill-one");
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn test_fetch_org_repositories_user_fallback() {
+    let server = MockServer::start().await;
+
+    // /orgs/someuser/repos returns 404
+    Mock::given(method("GET"))
+        .and(path("/orgs/someuser/repos"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    // /users/someuser/repos returns 200
+    Mock::given(method("GET"))
+        .and(path("/users/someuser/repos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "name": "user-repo", "owner": { "login": "someuser" }, "archived": false }
+        ])))
+        .mount(&server)
+        .await;
+
+    let options = ScannerOptions {
+        base_api_url: Some(server.uri()),
+        ..Default::default()
+    };
+
+    let repos = skill_atlas::scanner::fetch_org_repositories("someuser", &options)
+        .await
+        .unwrap();
+
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].owner, "someuser");
+    assert_eq!(repos[0].repo, "user-repo");
 }
 
 fn uuid_or_timestamp() -> u128 {

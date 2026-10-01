@@ -25,6 +25,8 @@ pub enum MenuAction {
     Open(usize),
     /// Show similarity information for the skill at the given index.
     Similar(usize),
+    /// Toggle starred status for the skill at the given index.
+    ToggleStar(usize),
     /// Leave the menu and return to the caller (e.g. the `skill-atlas>` prompt).
     Back,
     /// Key has no effect.
@@ -59,6 +61,9 @@ pub fn handle_menu_key(
         KeyCode::Down | KeyCode::Char('j') => MenuAction::Move((selected_idx + 1) % len),
         KeyCode::Enter => MenuAction::Open(selected_idx.min(len - 1)),
         KeyCode::Char('s') | KeyCode::Char('S') => MenuAction::Similar(selected_idx.min(len - 1)),
+        KeyCode::Char('*') | KeyCode::Char('t') | KeyCode::Char('T') | KeyCode::Char(' ') => {
+            MenuAction::ToggleStar(selected_idx.min(len - 1))
+        }
         _ => MenuAction::Ignore,
     }
 }
@@ -129,6 +134,21 @@ impl MenuState {
                     }
                 });
             }
+            MenuAction::ToggleStar(idx) => {
+                let Some(skill) = skills.get(idx) else {
+                    return true;
+                };
+                let new_state = if let Ok(conn) = crate::storage::open_db(None) {
+                    crate::storage::toggle_skill_starred(&conn, skill).unwrap_or(!skill.starred)
+                } else {
+                    !skill.starred
+                };
+                self.status = Some(if new_state {
+                    format!("{} Starred {}", "⭐".yellow(), skill.name.bold())
+                } else {
+                    format!("{} Unstarred {}", "☆".dimmed(), skill.name.bold())
+                });
+            }
             MenuAction::Ignore => {}
         }
         true
@@ -179,10 +199,12 @@ pub fn present_skills(
         );
         for (idx, skill) in skills.iter().enumerate() {
             let filename = skill_badge_label(skill, skills);
+            let star_prefix = if skill.starred { "⭐ " } else { "" };
 
             println!(
-                " [{}] › {} [{}]\n     {}\n     {}",
+                " [{}] › {}{} [{}]\n     {}\n     {}",
                 idx + 1,
+                star_prefix,
                 skill.name.bold().cyan(),
                 format!("{} ↗", filename).dimmed(),
                 skill.description.normal(),
@@ -207,10 +229,11 @@ fn run_interactive_loop(
     let mut state = MenuState::default();
     let repo = repo_name.unwrap_or_default().to_string();
     let mut opener = |url: &str| open::that(url);
+    let mut current_skills = skills.to_vec();
 
     let res = (|| -> io::Result<InteractiveResult> {
         loop {
-            render_menu(&mut stdout, skills, repo_name, &state, history)?;
+            render_menu(&mut stdout, &current_skills, repo_name, &state, history)?;
 
             if let Event::Key(key_event) = event::read()? {
                 if key_event.kind != event::KeyEventKind::Press {
@@ -220,9 +243,14 @@ fn run_interactive_loop(
                     key_event.code,
                     key_event.modifiers,
                     state.selected_idx,
-                    skills.len(),
+                    current_skills.len(),
                 );
-                if !state.apply(action, skills, &repo, history, &mut opener) {
+                if let MenuAction::ToggleStar(idx) = action {
+                    if let Some(s) = current_skills.get_mut(idx) {
+                        s.starred = !s.starred;
+                    }
+                }
+                if !state.apply(action, &current_skills, &repo, history, &mut opener) {
                     return Ok(InteractiveResult::Exited);
                 }
             }
@@ -285,10 +313,13 @@ pub fn render_menu<W: Write>(
             "›".dimmed()
         };
 
+        let star_prefix = if skill.starred { "⭐ " } else { "" };
+        let full_skill_name = format!("{}{}", star_prefix, skill.name);
+
         let skill_name_colored = if is_selected {
-            skill.name.bold().bright_cyan()
+            full_skill_name.bold().bright_cyan()
         } else {
-            skill.name.bright_cyan()
+            full_skill_name.bright_cyan()
         };
 
         let file_badge_colored = if is_selected {
@@ -298,7 +329,8 @@ pub fn render_menu<W: Write>(
         };
 
         // Calculate available spacing for right-aligned badge
-        let left_plain_len = 4 + 1 + 2 + skill.name.chars().count() + opened_mark.chars().count(); // "[xx] › skill-name ✓ opened"
+        let left_plain_len =
+            4 + 1 + 2 + full_skill_name.chars().count() + opened_mark.chars().count(); // "[xx] › ⭐ skill-name ✓ opened"
         let badge_len = badge_text.chars().count();
         let pad_len = if effective_width > left_plain_len + badge_len + 2 {
             effective_width - (left_plain_len + badge_len)
@@ -343,7 +375,7 @@ pub fn render_menu<W: Write>(
     writeln!(
         out,
         "{}\r",
-        "↑/↓ navigate • Enter open in GitHub • s similar • q back to prompt".dimmed()
+        "↑/↓ navigate • Enter open in GitHub • * star • s similar • q back to prompt".dimmed()
     )?;
 
     if let Some(status) = &state.status {

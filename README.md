@@ -1,12 +1,14 @@
 # Skill Atlas ⚡
 
-Skill Atlas is a high-performance interactive CLI built in Rust designed to scan GitHub repositories for AI agent skills and present them in a clean, terminal-rendered interactive menu with local SQLite caching. Easily navigate through discovered skills with arrow keys and open their GitHub definitions directly in your default browser.
+Skill Atlas is a high-performance interactive CLI built in Rust designed to scan GitHub repositories and organizations for AI agent skills and present them in a clean, terminal-rendered interactive menu with local SQLite caching. Easily navigate through discovered skills with arrow keys, bookmark your favorites with stars, and open their GitHub definitions directly in your default browser.
 
 ---
 
 ## 🚀 Features
 
 - **Blazing Fast GitHub Scanner**: Built natively in Rust for high throughput and minimal resource usage.
+- **Organization-Wide Scanning**: Automatically discover and scan all available repositories in an organization (e.g. `org:JetBrains`, `org:openai`, or `https://github.com/JetBrains`).
+- **Star & Bookmark Skills**: Star/bookmark favorite agent skills persistently in SQLite from the interactive menu (`*` / `Space`), REPL (`star <number|name>`, `starred`), CLI (`skill-atlas starred`), or Web UI.
 - **Local SQLite Caching**: Automatically saves scan results in a local SQLite database (`~/.skill-atlas/skills.db`). Subsequent scans verify whether the repository was updated on GitHub and reuse cached results to save bandwidth and API limits.
 - **Repository Tree Analysis**: Loads the whole repository tree in one request and picks out skill files named `SKILL.md`, `skill.json` or `skill.yaml` at any depth (e.g. in `.agents/skills`, `.claude/skills`, `.junie/skills`, `skills/`). Supporting documents in skill folders and vendored folders such as `node_modules` or `.venv` are skipped.
 - **Fast Downloads**: Skill files are fetched concurrently (up to 16 at a time) from `raw.githubusercontent.com`, which doesn't use up the GitHub API rate limit. A warning is shown if GitHub truncates the tree of a very large repository.
@@ -14,16 +16,17 @@ Skill Atlas is a high-performance interactive CLI built in Rust designed to scan
 - **Interactive Terminal Menu**:
   - `↑` / `↓` (or `k` / `j`): Move selection cursor between discovered skills.
   - `Enter`: Open the selected skill's GitHub page in the default browser — the menu stays open so you can open more skills.
+  - `*` / `t` / `Space`: Toggle star/bookmark status for the currently selected skill.
   - `s` / `S`: Inspect similarity heuristics and view the most similar counterpart skill with similarity percentage.
   - Opened skills are marked `✓ opened`, and the last opens stay listed below the menu while you navigate (`history` at the prompt shows the full audit of the session).
   - Skills sharing a name (e.g. one in `.claude/skills` and one shipped in a plugin) are all listed, with their full path shown so you can tell them apart.
   - `q` / `Esc` / `Ctrl+C`: Leave the menu and return to the `skill-atlas>` prompt.
 - **Smart Filtering & Similarity Analysis**:
-  - Filter results on the CLI (`--filter <QUERY>` or `filter [query]` in REPL) by name, description, or path.
+  - Filter results on the CLI (`--filter <QUERY>` or `filter [query]` in REPL) by name, description, path, or `status:starred`.
   - Heuristic similarity detection (`similar` or `similar <target>` in REPL, `--similar` in CLI) computing percentage matches across skill names, descriptions, and file locations.
 - **Persistent Interactive Session**: The CLI does not stop after one scan. From the `skill-atlas>` prompt you can scan other repositories, filter, discover similar skills, re-scan, list and open skills again, until you type `exit`.
-- **Localhost Web Interface**: Launch an intuitive web UI via `skill-atlas web` or `web` inside the prompt to scan repositories, search/filter skills live, filter by format, discover similar skills with percentage badges, view cached history, and open definitions in your browser.
-- **Flexible Repository Inputs**: Accepts `owner/repo`, full HTTPS URLs (`https://github.com/owner/repo`), and SSH URLs (`git@github.com:...`).
+- **Localhost Web Interface**: Launch an intuitive web UI via `skill-atlas web` or `web` inside the prompt to scan repositories/organizations, search/filter skills live, bookmark skills with stars, filter by format, discover similar skills with percentage badges, view cached history, and open definitions in your browser.
+- **Flexible Repository Inputs**: Accepts `owner/repo`, full HTTPS URLs (`https://github.com/owner/repo`), SSH URLs (`git@github.com:...`), and organization identifiers (`org:owner` or `https://github.com/owner`).
 - **Non-Interactive & JSON Support**: Provides clean terminal output in non-TTY environments and a `--json` flag for scripting and CI pipelines.
 
 ---
@@ -56,14 +59,18 @@ cargo install --path .
 ### Core Commands
 
 ```bash
-# Scan a single GitHub repository or multiple repositories at once
+# Scan a single GitHub repository, multiple repositories, or entire organizations
 skill-atlas scan <githubrepo>...
 # e.g.:
 # skill-atlas scan openai/swarm JetBrains/kotlin
-# skill-atlas scan "openai/swarm, JetBrains/kotlin"
+# skill-atlas scan org:JetBrains
+# skill-atlas scan https://github.com/JetBrains
 
 # List all cached skills from local SQLite database
 skill-atlas list
+
+# List all starred (bookmarked) skills from local SQLite database
+skill-atlas starred
 
 # Filter cached skills by keyword query
 skill-atlas filter <query>
@@ -85,6 +92,9 @@ In a terminal, running `skill-atlas` or `skill-atlas scan <repo>` starts the per
 Type 'scan <githubrepo>' (e.g. scan https://github.com/JetBrains/kotlin), 'help' for commands, or 'exit' to quit.
 
 skill-atlas> scan JetBrains/kotlin openai/swarm # scan multiple repos in one go
+skill-atlas> scan org:JetBrains                # scan an entire organization's repositories
+skill-atlas> star 1                            # star/bookmark skill #1
+skill-atlas> starred                           # view all starred skills
 skill-atlas> open 3                            # open skill #3 of the scan
 skill-atlas> list                              # show all cached skills from database
 skill-atlas> filter gradle                     # filter skills by keyword
@@ -95,9 +105,12 @@ skill-atlas> exit
 
 | Command | Action |
 | --- | --- |
-| `scan <githubrepo>...` | Scan one or multiple GitHub repositories (bare `owner/repo` or URLs work too) |
+| `scan <githubrepo>...` | Scan one or multiple GitHub repositories / organizations (bare `owner/repo`, `org:<name>`, or URLs work too) |
 | `list` / `ls` | Show all cached skills from SQLite database or current scan |
-| `filter [query\|clear]` / `f` | Filter skills by name, description, or path |
+| `starred` / `stars` / `bookmarks` | Show all starred skills from SQLite database |
+| `star <number\|name>` | Bookmark/star a skill by number or name |
+| `unstar <number\|name>` | Remove bookmark/star from a skill |
+| `filter [query\|clear]` / `f` | Filter skills by name, description, path, or starred status |
 | `similar [<number\|name>]` | Discover similar skills and duplicate definitions by percentage |
 | `open <number\|name>` | Open a skill definition on GitHub in default browser |
 | `web` / `serve` | Start localhost web interface to scan and view skills |
@@ -112,7 +125,7 @@ skill-atlas> exit
 $ skill-atlas scan https://github.com/JetBrains/kotlin
 JetBrains/kotlin 6 skills
 
- [ 1] › analysis-api-create-cherry-pick-issue                                       SKILL.md ↗
+ [ 1] › ⭐ analysis-api-create-cherry-pick-issue                                    SKILL.md ↗
       Create a KTIJ cherry-pick tracking issue for a KT fix that needs to be cherry...
 
  [ 2] › analysis-api-mark-internal-apis                                             SKILL.md ↗
@@ -130,7 +143,7 @@ JetBrains/kotlin 6 skills
  [ 6] › minimize-repro-for-diagnostic-test                                         SKILL.md ↗
       Makes a minimal reproduction of a Frontend-related bug as a diagnostic test...
 
-↑/↓ navigate • Enter open in GitHub • q back to prompt
+↑/↓ navigate • Enter open in GitHub • * star • s similar • q back to prompt
 ```
 
 ---
@@ -142,6 +155,8 @@ JetBrains/kotlin 6 skills
 | `↑` / `Up Arrow` or `k` | Navigate to previous skill |
 | `↓` / `Down Arrow` or `j` | Navigate to next skill |
 | `Enter` | Open the selected skill in your default web browser (menu stays open) |
+| `*` / `t` or `Space` | Toggle star/bookmark for the selected skill |
+| `s` / `S` | Discover similar counterpart skills |
 | `q` / `Esc` or `Ctrl+C` | Return to the `skill-atlas>` prompt |
 
 ---
