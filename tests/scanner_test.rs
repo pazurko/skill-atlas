@@ -160,6 +160,8 @@ async fn test_scan_github_repo_success_and_caching() {
 #[tokio::test]
 async fn test_scan_github_repo_not_found_404() {
     let mock_server = MockServer::start().await;
+    let temp_dir = env::temp_dir();
+    let db_path = temp_dir.join(format!("test_not_found_{}.db", uuid_or_timestamp()));
 
     Mock::given(method("GET"))
         .and(path("/repos/acme/nonexistent/git/trees/HEAD"))
@@ -173,18 +175,21 @@ async fn test_scan_github_repo_not_found_404() {
         base_api_url: Some(mock_server.uri()),
         base_raw_url: Some(mock_server.uri()),
         no_cache: true,
-        db_path: None,
+        db_path: Some(db_path.clone()),
     };
 
     let result = scan_github_repo("acme/nonexistent", &options).await;
     assert!(
         matches!(result, Err(ScannerError::NotFound(owner, repo)) if owner == "acme" && repo == "nonexistent")
     );
+    let _ = std::fs::remove_file(db_path);
 }
 
 #[tokio::test]
 async fn test_scan_github_repo_forbidden_rate_limit_403() {
     let mock_server = MockServer::start().await;
+    let temp_dir = env::temp_dir();
+    let db_path = temp_dir.join(format!("test_forbidden_{}.db", uuid_or_timestamp()));
 
     Mock::given(method("GET"))
         .and(path("/repos/acme/limited/git/trees/HEAD"))
@@ -202,7 +207,7 @@ async fn test_scan_github_repo_forbidden_rate_limit_403() {
         base_api_url: Some(mock_server.uri()),
         base_raw_url: Some(mock_server.uri()),
         no_cache: true,
-        db_path: None,
+        db_path: Some(db_path.clone()),
     };
 
     let result = scan_github_repo("acme/limited", &options).await;
@@ -214,6 +219,7 @@ async fn test_scan_github_repo_forbidden_rate_limit_403() {
         }
         _ => panic!("Expected Forbidden error with rate limit message"),
     }
+    let _ = std::fs::remove_file(db_path);
 }
 
 async fn mount_head_repo(server: &MockServer, default_branch: Option<&str>) {
@@ -274,31 +280,38 @@ const MASTER_URL: &str =
 async fn test_scan_head_uses_repository_default_branch_in_urls() {
     let server = MockServer::start().await;
     mount_head_repo(&server, Some("master")).await;
+    let db_path = env::temp_dir().join(format!("test_head_branch_{}.db", uuid_or_timestamp()));
 
     let result = scan_github_repo(
         "https://github.com/jetbrains/kotlin",
-        &head_options(&server, true, None),
+        &head_options(&server, true, Some(db_path.clone())),
     )
     .await
     .unwrap();
 
     assert_eq!(result.skills.len(), 1);
     assert_eq!(result.skills[0].url, MASTER_URL);
+    let _ = std::fs::remove_file(db_path);
 }
 
 #[tokio::test]
 async fn test_scan_head_falls_back_to_head_ref_when_default_branch_unknown() {
     let server = MockServer::start().await;
     mount_head_repo(&server, None).await;
+    let db_path = env::temp_dir().join(format!("test_head_fallback_{}.db", uuid_or_timestamp()));
 
-    let result = scan_github_repo("jetbrains/kotlin", &head_options(&server, true, None))
-        .await
-        .unwrap();
+    let result = scan_github_repo(
+        "jetbrains/kotlin",
+        &head_options(&server, true, Some(db_path.clone())),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.skills[0].url,
         "https://github.com/jetbrains/kotlin/blob/HEAD/.claude/skills/cherry-pick/SKILL.md"
     );
+    let _ = std::fs::remove_file(db_path);
 }
 
 #[tokio::test]
@@ -385,13 +398,14 @@ async fn test_scan_downloads_only_skill_files_concurrently_in_order() {
             .await;
     }
 
+    let db_path = env::temp_dir().join(format!("test_concurrent_{}.db", uuid_or_timestamp()));
     let options = ScannerOptions {
         token: None,
         branch: None,
         base_api_url: Some(server.uri()),
         base_raw_url: Some(server.uri()),
         no_cache: true,
-        db_path: None,
+        db_path: Some(db_path.clone()),
     };
     let started = std::time::Instant::now();
     let result = scan_github_repo("acme/many", &options).await.unwrap();
@@ -419,6 +433,7 @@ async fn test_scan_downloads_only_skill_files_concurrently_in_order() {
     assert!(!requests
         .iter()
         .any(|r| r.url.path().contains("/git/blobs/")));
+    let _ = std::fs::remove_file(db_path);
 }
 
 #[tokio::test]
@@ -449,13 +464,14 @@ async fn test_scan_falls_back_to_blob_api_and_reports_truncated_tree() {
         .mount(&server)
         .await;
 
+    let db_path = env::temp_dir().join(format!("test_blob_fallback_{}.db", uuid_or_timestamp()));
     let options = ScannerOptions {
         token: None,
         branch: None,
         base_api_url: Some(server.uri()),
         base_raw_url: Some(server.uri()),
         no_cache: true,
-        db_path: None,
+        db_path: Some(db_path.clone()),
     };
     let result = scan_github_repo("acme/big", &options).await.unwrap();
 
@@ -463,6 +479,7 @@ async fn test_scan_falls_back_to_blob_api_and_reports_truncated_tree() {
     assert_eq!(result.skills.len(), 1);
     assert_eq!(result.skills[0].name, "deploy");
     assert_eq!(result.skills[0].description, "Deploys it.");
+    let _ = std::fs::remove_file(db_path);
 }
 
 fn uuid_or_timestamp() -> u128 {

@@ -21,10 +21,11 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum Commands {
-    /// Scan target GitHub repository for AI agent skills
+    /// Scan target GitHub repository or repositories for AI agent skills
     Scan {
-        /// Target repository identifier or URL (e.g. owner/repo or https://github.com/owner/repo)
-        githubrepo: Option<String>,
+        /// Target repository identifier(s) or URL(s) (e.g. owner/repo or https://github.com/owner/repo)
+        #[arg(value_name = "GITHUBREPO")]
+        githubrepo: Vec<String>,
     },
 
     /// Filter cached skills by keyword query across name, description, or path
@@ -45,6 +46,9 @@ pub enum Commands {
         /// Port to listen on (default: 3000)
         #[arg(short, long, default_value_t = 3000)]
         port: u16,
+        /// Do not automatically open browser on startup
+        #[arg(long, default_value_t = false)]
+        no_open: bool,
     },
 
     /// List all cached skills from the local SQLite database
@@ -62,30 +66,28 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
-        Some(Commands::Web { port }) => {
+        Some(Commands::Web { port, no_open }) => {
             let web_options = crate::web::WebOptions {
                 host: "127.0.0.1".to_string(),
                 port,
-                open_browser: true,
+                open_browser: !no_open,
                 scanner_options: ScannerOptions::default(),
             };
             crate::web::start_web_server(web_options).await
         }
-        Some(Commands::Scan {
-            githubrepo: Some(repo),
-        }) if !repo.trim().is_empty() => {
-            if is_tty() {
-                run_session(Some(repo.trim()), ScannerOptions::default(), None).await
+        Some(Commands::Scan { githubrepo }) => {
+            let targets = extract_targets(&githubrepo);
+            if targets.is_empty() {
+                if is_tty() {
+                    run_session(None, ScannerOptions::default(), None).await
+                } else {
+                    print_usage();
+                    Ok(())
+                }
+            } else if is_tty() {
+                run_session(Some(&targets), ScannerOptions::default(), None).await
             } else {
-                scan_and_present(&repo).await
-            }
-        }
-        Some(Commands::Scan { githubrepo: _ }) => {
-            if is_tty() {
-                run_session(None, ScannerOptions::default(), None).await
-            } else {
-                print_usage();
-                Ok(())
+                scan_and_present_multiple(&targets).await
             }
         }
         Some(Commands::List) => {
@@ -297,14 +299,25 @@ fn is_tty() -> bool {
 fn print_usage() {
     eprintln!(
         "{}",
-        "Skill Atlas - Core commands:\n  skill-atlas scan <githubrepo>\n  skill-atlas list\n  skill-atlas filter <query>\n  skill-atlas similar [target]\n  skill-atlas web\n\nRun `skill-atlas --help` for full details."
+        "Skill Atlas - Core commands:\n  skill-atlas scan <githubrepo>...\n  skill-atlas list\n  skill-atlas filter <query>\n  skill-atlas similar [target]\n  skill-atlas web\n\nRun `skill-atlas --help` for full details."
             .yellow()
     );
 }
 
-/// Runs the persistent `skill-atlas>` prompt session, optionally scanning a repository first.
+pub fn extract_targets(inputs: &[String]) -> Vec<String> {
+    inputs
+        .iter()
+        .flat_map(|item| {
+            item.split([',', ';'])
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .collect()
+}
+
+/// Runs the persistent `skill-atlas>` prompt session, optionally scanning repositories first.
 async fn run_session(
-    initial_repo: Option<&str>,
+    initial_repos: Option<&[String]>,
     options: ScannerOptions,
     filter: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -313,15 +326,69 @@ async fn run_session(
     let mut session = ReplSession::new(options);
 
     write_welcome(&mut out)?;
-    if let Some(repo) = initial_repo {
+    if let Some(repos) = initial_repos {
         session
-            .scan(&mut out, &mut ui, repo, None, false, filter)
+            .scan(&mut out, &mut ui, repos, None, false, filter)
             .await?;
     }
     out.flush()?;
 
     let mut input = io::stdin().lock();
     run_repl(&mut input, &mut out, &mut ui, &mut session).await?;
+    Ok(())
+}
+
+async fn scan_and_present_multiple(targets: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if targets.len() == 1 {
+        return scan_and_present(&targets[0]).await;
+    }
+
+    println!(
+        "{}",
+        format!(
+            "\n🔍 Scanning {} repositories for agent skills...",
+            targets.len()
+        )
+        .cyan()
+    );
+
+    let options = ScannerOptions::default();
+    let mut all_skills = Vec::new();
+
+    for target in targets {
+        println!("{}", format!(" • Scanning {}...", target.bold()).cyan());
+
+        match scan_github_repo(target, &options).await {
+            Ok(result) => {
+                if let Some(msg) = cache_message(&result) {
+                    println!("   {}", msg.green());
+                }
+                if let Some(msg) = truncation_message(&result) {
+                    println!("   {}", msg.yellow());
+                }
+                all_skills.extend(result.skills);
+            }
+            Err(err) => {
+                eprintln!("{}", format!("   ❌ Error for {}: {}", target, err).red());
+            }
+        }
+    }
+
+    if all_skills.is_empty() {
+        println!(
+            "{}",
+            "\nNo agent skills found in the scanned repositories.\n".yellow()
+        );
+        return Ok(());
+    }
+
+    let title = format!("Multiple Repositories ({} skills)", all_skills.len());
+    present_skills(
+        &all_skills,
+        Some(&title),
+        false,
+        &mut crate::history::OpenHistory::new(),
+    )?;
     Ok(())
 }
 

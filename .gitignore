@@ -11,3 +11,8 @@ debug/
 .env.*
 .idea/
 .DS_Store
+
+# Playwright & Node artifacts
+node_modules/
+playwright-report/
+test-results/
