@@ -35,8 +35,8 @@ skill-atlas
 
 ### Web Interface & UI
 - Accessible via `skill-atlas web` or `web` inside the interactive prompt.
-- Modern minimalist layout with dark & light theme switcher and cat motifs (`Skill Cat 🐾`).
-- Fast SQLite cache loader modal, instant search filter, format filter chips (`All`, `SKILL.md`, `YAML`, `JSON`), and similar pairs exploration panel.
+- Warm ginger-cat aesthetic with dark & light theme switcher and animated cat motifs (blinking eyes, swishing tail, interactive mouse-following eye pupils, hop cheers, and strolling footer cat).
+- Instant query filter (supporting `repo:`, `name:`, `desc:`, `path:`, `status:` and phrases with keyword highlighting), sortable table columns, center peek modal dialog with similar skills exploration, and "Show all saved" SQLite catalogue viewer.
 
 ## Output Example & Visual Presentation
 
@@ -141,7 +141,8 @@ JetBrains/kotlin 6 skills
      - **Cached History Sidebar**: Lists previously scanned repositories with quick-click reloading from local SQLite cache.
    - **REST API Endpoints**:
      - `GET /`: Serves the embedded HTML/CSS/JavaScript web interface.
-     - `POST /api/scan`: Executes scan for repository specified in JSON payload `{"repo": "owner/repo", "branch": "HEAD", "refresh": false, "token": "...", "filter": "..."}`.
+     - `GET /api/skills[?q=<query>]`: Retrieves all cached skills from local SQLite database with optional filter query.
+     - `POST /api/scan`: Executes scan for repository or repositories specified in JSON payload `{"repo": "owner/repo", "branch": "HEAD", "refresh": false, "token": "...", "filter": "..."}` or `{"targets": [...]}`.
      - `GET /api/scan?repo=...&branch=...&refresh=...&filter=...`: Executes scan via query parameters.
      - `POST /api/similar`: Returns similar pairs and target skill matches for repository specified in JSON payload `{"repo": "owner/repo", "target": "...", "min_similarity": 30.0}`.
      - `GET /api/similar?repo=...&target=...&min_similarity=...`: Returns similarity analysis via query parameters.
