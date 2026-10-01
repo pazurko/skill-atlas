@@ -23,7 +23,7 @@ Users required a cleaner, more streamlined command interface without redundant f
   - Cat theme / motifs: Skill Cat brand mascot icon, cat paw buttons (`🐾 Scan Repo`, `🐾 Similar Pairs`), cute ASCII/SVG empty state (`(=^･ω･^=)`), and curated badges.
   - Direct integration with Axum backend endpoints (`/api/scan`, `/api/similar`, `/api/cached`, `/api/health`).
 - **Standard Pull Request Template**:
-  - Created `.github/pull_request_template.md` (and `.github/pull-request-template.md`) featuring Summary, Visual Demonstration, Architecture Changes, Tests, and Limitations.
+  - Created `.github/pull_request_template.md` featuring Summary, Visual Demonstration, Architecture Changes, Tests, and Limitations.
 
 ## 3. Architecture & Implementation Details
 - `src/storage.rs`: Added `get_all_cached_skills(&Connection) -> Result<Vec<Skill>>` to query all skills joined with `repositories` from SQLite.
