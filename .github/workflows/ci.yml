@@ -69,6 +69,24 @@ jobs:
     - name: Run Playwright Visual & Video Tests
       run: npm run test:e2e
 
+    - name: Generate Visual Step Summary
+      if: always()
+      run: |
+        echo "## 📸 Web UI Visual & Playwright Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Visual Screenshots Captured in CI" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Scenario | Screenshot Preview |" >> $GITHUB_STEP_SUMMARY
+        echo "|:---|:---|" >> $GITHUB_STEP_SUMMARY
+        echo "| **01 - Landing Page (Default)** | <img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/01-landing-page-default.png\" width=\"400\" /> |" >> $GITHUB_STEP_SUMMARY
+        echo "| **02 - Landing Page (Toggled Theme)** | <img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/02-landing-page-toggled-theme.png\" width=\"400\" /> |" >> $GITHUB_STEP_SUMMARY
+        echo "| **03 - Scanned Results View** | <img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/03-scanned-results-view.png\" width=\"400\" /> |" >> $GITHUB_STEP_SUMMARY
+        echo "| **04 - Filtered Results** | <img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/04-filtered-results.png\" width=\"400\" /> |" >> $GITHUB_STEP_SUMMARY
+        echo "| **05 - Center Peek Modal** | <img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/05-center-peek-modal.png\" width=\"400\" /> |" >> $GITHUB_STEP_SUMMARY
+        echo "| **06 - Multi-Repository Scan** | <img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/06-multi-repo-scan.png\" width=\"400\" /> |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🎥 Recorded test videos and complete HTML report are downloadable in the workflow artifacts above." >> $GITHUB_STEP_SUMMARY
+
     - name: Upload Playwright Visual Artifacts (Videos, Screenshots & Reports)
       if: always()
       uses: actions/upload-artifact@v4

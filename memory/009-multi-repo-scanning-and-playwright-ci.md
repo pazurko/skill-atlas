@@ -23,8 +23,9 @@
   - Web UI: Supports comma-separated or space-separated inputs in the target input field with real-time status and table rendering.
 - **Playwright Visual Regression & Video CI**:
   - Configured `@playwright/test` E2E suite recording video of the web UI being used (`video: 'on'`), capturing screenshots of default theme, toggled theme, scanned results view, filter interaction, center peek modal, and multi-repo scan flow.
+  - Baseline screenshots are committed under `screenshots/` for direct rendering in Pull Requests and CI reports.
   - Added `--no-open` flag to `skill-atlas web` to allow headless and automated server startup.
-  - Added GitHub Actions CI job `visual-e2e` that runs Playwright tests and uploads video, screenshot, and report artifacts.
+  - Added GitHub Actions CI job `visual-e2e` that runs Playwright tests, publishes visual previews into `$GITHUB_STEP_SUMMARY`, and uploads video, screenshot, and report artifacts.
 
 ---
 
