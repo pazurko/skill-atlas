@@ -20,11 +20,16 @@ pub enum ReplCommand {
         repo: String,
         branch: Option<String>,
         refresh: bool,
+        filter: Option<String>,
     },
     /// Re-scan the last scanned repository, bypassing the cache.
     Rescan,
     /// Show the skills of the last scan again.
     List,
+    /// Filter skills by keyword query across name, description, or path.
+    Filter(Option<String>),
+    /// Discover similar skills based on heuristics and similarity percentages.
+    Similar(Option<String>),
     /// Open a skill from the last scan by number or name.
     Open(String),
     /// Show every skill opened in this session (audit trail).
@@ -41,9 +46,12 @@ pub enum ReplCommand {
     Invalid(String),
 }
 
-pub const SCAN_USAGE: &str = "Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh]";
+pub const SCAN_USAGE: &str =
+    "Usage: scan <githubrepo> [--branch <BRANCH>] [--refresh] [--filter <QUERY>]";
 pub const OPEN_USAGE: &str = "Usage: open <number|name>";
 pub const WEB_USAGE: &str = "Usage: web [--port <PORT>] [--no-open]";
+pub const FILTER_USAGE: &str = "Usage: filter [query|clear]";
+pub const SIMILAR_USAGE: &str = "Usage: similar [<number|name>]";
 
 /// Parses one line typed at the prompt into a command.
 pub fn parse_command(line: &str) -> ReplCommand {
@@ -57,7 +65,27 @@ pub fn parse_command(line: &str) -> ReplCommand {
         "exit" | "quit" | "q" => ReplCommand::Exit,
         "help" | "?" => ReplCommand::Help,
         "clear" | "cls" => ReplCommand::Clear,
-        "list" | "ls" => ReplCommand::List,
+        "list" | "ls" => {
+            if args.is_empty() {
+                ReplCommand::List
+            } else {
+                ReplCommand::Filter(Some(args.join(" ")))
+            }
+        }
+        "filter" | "f" => {
+            if args.is_empty() {
+                ReplCommand::Filter(None)
+            } else {
+                ReplCommand::Filter(Some(args.join(" ")))
+            }
+        }
+        "similar" => {
+            if args.is_empty() {
+                ReplCommand::Similar(None)
+            } else {
+                ReplCommand::Similar(Some(args.join(" ")))
+            }
+        }
         "rescan" | "refresh" => ReplCommand::Rescan,
         "history" | "opened" => ReplCommand::History,
         "web" | "serve" => parse_web_args(args),
@@ -113,6 +141,7 @@ fn parse_scan_args(args: &[&str]) -> ReplCommand {
     let mut repo: Option<String> = None;
     let mut branch: Option<String> = None;
     let mut refresh = false;
+    let mut filter: Option<String> = None;
     let mut iter = args.iter();
 
     while let Some(arg) = iter.next() {
@@ -121,9 +150,16 @@ fn parse_scan_args(args: &[&str]) -> ReplCommand {
                 Some(value) => branch = Some(value.to_string()),
                 None => return ReplCommand::Invalid(SCAN_USAGE.to_string()),
             },
+            "-f" | "--filter" => match iter.next() {
+                Some(value) => filter = Some(value.to_string()),
+                None => return ReplCommand::Invalid(SCAN_USAGE.to_string()),
+            },
             "--refresh" | "--no-cache" => refresh = true,
             flag if flag.starts_with("--branch=") => {
                 branch = Some(flag["--branch=".len()..].to_string());
+            }
+            flag if flag.starts_with("--filter=") => {
+                filter = Some(flag["--filter=".len()..].to_string());
             }
             flag if flag.starts_with('-') => {
                 return ReplCommand::Invalid(format!("Unknown option '{}'. {}", flag, SCAN_USAGE));
@@ -142,6 +178,7 @@ fn parse_scan_args(args: &[&str]) -> ReplCommand {
             repo,
             branch,
             refresh,
+            filter,
         },
         None => ReplCommand::Invalid(SCAN_USAGE.to_string()),
     }
@@ -204,6 +241,8 @@ pub struct ReplSession {
     pub repo_name: Option<String>,
     /// Skills of the last successful scan.
     pub skills: Vec<Skill>,
+    /// Active search filter if any.
+    pub active_filter: Option<String>,
     /// Every skill opened in this session, across repositories.
     pub history: OpenHistory,
 }
@@ -224,6 +263,7 @@ impl ReplSession {
         repo: &str,
         branch: Option<String>,
         refresh: bool,
+        filter: Option<String>,
     ) -> io::Result<()> {
         writeln!(
             out,
@@ -255,6 +295,13 @@ impl ReplSession {
                 self.last_branch = branch;
                 self.repo_name = Some(repo_name.clone());
                 self.skills = result.skills;
+                self.active_filter = filter;
+
+                let displayed = if let Some(f) = &self.active_filter {
+                    crate::similarity::filter_skills(&self.skills, f)
+                } else {
+                    self.skills.clone()
+                };
 
                 if self.skills.is_empty() {
                     writeln!(
@@ -262,12 +309,34 @@ impl ReplSession {
                         "{}",
                         format!("\nNo agent skills found in {}.\n", repo_name.bold()).yellow()
                     )?;
-                } else {
-                    ui.show_skills(out, &self.skills, &repo_name, &mut self.history)?;
+                } else if displayed.is_empty() {
                     writeln!(
                         out,
                         "{}",
-                        "Type 'open <number|name>', 'list', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
+                        format!(
+                            "\nNo agent skills matched filter '{}' (0 of {} skills in {}).\n",
+                            self.active_filter.as_deref().unwrap_or_default(),
+                            self.skills.len(),
+                            repo_name.bold()
+                        )
+                        .yellow()
+                    )?;
+                } else {
+                    let title = if self.active_filter.is_some() {
+                        format!(
+                            "{} (filtered: {} of {})",
+                            repo_name,
+                            displayed.len(),
+                            self.skills.len()
+                        )
+                    } else {
+                        repo_name
+                    };
+                    ui.show_skills(out, &displayed, &title, &mut self.history)?;
+                    writeln!(
+                        out,
+                        "{}",
+                        "Type 'open <number|name>', 'filter [query]', 'similar', 'list', 'history', 'scan <githubrepo>', 'rescan' or 'help'."
                             .dimmed()
                     )?;
                 }
@@ -328,11 +397,13 @@ impl ReplSession {
                 repo,
                 branch,
                 refresh,
-            } => self.scan(out, ui, &repo, branch, refresh).await?,
+                filter,
+            } => self.scan(out, ui, &repo, branch, refresh, filter).await?,
             ReplCommand::Rescan => match self.last_repo.clone() {
                 Some(repo) => {
                     let branch = self.last_branch.clone();
-                    self.scan(out, ui, &repo, branch, true).await?;
+                    self.scan(out, ui, &repo, branch, true, self.active_filter.clone())
+                        .await?;
                 }
                 None => writeln!(
                     out,
@@ -349,8 +420,173 @@ impl ReplSession {
                             .yellow()
                     )?;
                 } else {
-                    let repo_name = self.repo_name.clone().unwrap_or_default();
-                    ui.show_skills(out, &self.skills, &repo_name, &mut self.history)?;
+                    let displayed = if let Some(f) = &self.active_filter {
+                        crate::similarity::filter_skills(&self.skills, f)
+                    } else {
+                        self.skills.clone()
+                    };
+                    let title = if self.active_filter.is_some() {
+                        format!(
+                            "{} (filtered: {} of {})",
+                            self.repo_name.as_deref().unwrap_or_default(),
+                            displayed.len(),
+                            self.skills.len()
+                        )
+                    } else {
+                        self.repo_name.clone().unwrap_or_default()
+                    };
+                    ui.show_skills(out, &displayed, &title, &mut self.history)?;
+                }
+            }
+            ReplCommand::Filter(query) => {
+                if self.skills.is_empty() {
+                    writeln!(
+                        out,
+                        "{}",
+                        "No skills listed yet in this session. Run 'scan <githubrepo>' first."
+                            .yellow()
+                    )?;
+                } else {
+                    match query {
+                        None => {
+                            self.active_filter = None;
+                            writeln!(out, "{}", "Filter cleared. Showing all skills.".green())?;
+                            let repo_name = self.repo_name.clone().unwrap_or_default();
+                            ui.show_skills(out, &self.skills, &repo_name, &mut self.history)?;
+                        }
+                        Some(ref q)
+                            if q.trim().eq_ignore_ascii_case("clear") || q.trim().is_empty() =>
+                        {
+                            self.active_filter = None;
+                            writeln!(out, "{}", "Filter cleared. Showing all skills.".green())?;
+                            let repo_name = self.repo_name.clone().unwrap_or_default();
+                            ui.show_skills(out, &self.skills, &repo_name, &mut self.history)?;
+                        }
+                        Some(q) => {
+                            let filtered = crate::similarity::filter_skills(&self.skills, &q);
+                            if filtered.is_empty() {
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    format!(
+                                        "No skills matched filter '{}' (0 of {} skills).",
+                                        q.trim(),
+                                        self.skills.len()
+                                    )
+                                    .yellow()
+                                )?;
+                            } else {
+                                self.active_filter = Some(q.trim().to_string());
+                                let repo_name = format!(
+                                    "{} (filtered: {} of {})",
+                                    self.repo_name.as_deref().unwrap_or_default(),
+                                    filtered.len(),
+                                    self.skills.len()
+                                );
+                                ui.show_skills(out, &filtered, &repo_name, &mut self.history)?;
+                            }
+                        }
+                    }
+                }
+            }
+            ReplCommand::Similar(query) => {
+                if self.skills.is_empty() {
+                    writeln!(
+                        out,
+                        "{}",
+                        "No skills listed yet in this session. Run 'scan <githubrepo>' first."
+                            .yellow()
+                    )?;
+                } else {
+                    match query {
+                        None => {
+                            let pairs = crate::similarity::find_all_similar_pairs(
+                                &self.skills,
+                                crate::similarity::DEFAULT_SIMILARITY_THRESHOLD,
+                            );
+                            if pairs.is_empty() {
+                                writeln!(
+                                    out,
+                                    "{}",
+                                    format!(
+                                        "No similar skills found in {} (threshold: >= {:.0}%).",
+                                        self.repo_name.as_deref().unwrap_or_default(),
+                                        crate::similarity::DEFAULT_SIMILARITY_THRESHOLD
+                                    )
+                                    .yellow()
+                                )?;
+                            } else {
+                                writeln!(
+                                    out,
+                                    "\n{}",
+                                    format!(
+                                        "Similar skills in {} (threshold: >= {:.0}%):",
+                                        self.repo_name.as_deref().unwrap_or_default(),
+                                        crate::similarity::DEFAULT_SIMILARITY_THRESHOLD
+                                    )
+                                    .bold()
+                                )?;
+                                for p in &pairs {
+                                    writeln!(
+                                        out,
+                                        " • [{}] {} <-> [{}] {} ({:.0}% similar)",
+                                        p.index_a,
+                                        p.skill_a.name.cyan(),
+                                        p.index_b,
+                                        p.skill_b.name.cyan(),
+                                        p.similarity
+                                    )?;
+                                }
+                                writeln!(out)?;
+                            }
+                        }
+                        Some(target_query) => match self.find_skill(&target_query) {
+                            Ok(skill) => {
+                                let skill = skill.clone();
+                                let matches = crate::similarity::find_similar_skills(
+                                    &skill,
+                                    &self.skills,
+                                    crate::similarity::DEFAULT_SIMILARITY_THRESHOLD,
+                                );
+                                if matches.is_empty() {
+                                    writeln!(
+                                        out,
+                                        "{}",
+                                        format!(
+                                            "No skills similar to '{}' found (threshold: >= {:.0}%).",
+                                            skill.name,
+                                            crate::similarity::DEFAULT_SIMILARITY_THRESHOLD
+                                        )
+                                        .yellow()
+                                    )?;
+                                } else {
+                                    writeln!(
+                                        out,
+                                        "\n{}",
+                                        format!(
+                                            "Skills similar to '{}' (threshold: >= {:.0}%):",
+                                            skill.name,
+                                            crate::similarity::DEFAULT_SIMILARITY_THRESHOLD
+                                        )
+                                        .bold()
+                                    )?;
+                                    for m in &matches {
+                                        writeln!(
+                                            out,
+                                            " [{}] › {} ({:.0}% similar)\n     {}\n     {}",
+                                            m.index,
+                                            m.skill.name.bold().cyan(),
+                                            m.similarity,
+                                            m.skill.description,
+                                            format!("📁 {}", m.skill.path).dimmed()
+                                        )?;
+                                    }
+                                    writeln!(out)?;
+                                }
+                            }
+                            Err(msg) => writeln!(out, "{}", msg.yellow())?,
+                        },
+                    }
                 }
             }
             ReplCommand::History => self.history.write_all(out)?,
@@ -443,11 +679,19 @@ pub fn write_help<W: Write>(out: &mut W) -> io::Result<()> {
     writeln!(out, "\n{}", "Available commands:".bold())?;
     let rows = [
         (
-            "scan <githubrepo> [-b <BRANCH>] [--refresh]",
+            "scan <githubrepo> [-b <BRANCH>] [--refresh] [-f <QUERY>]",
             "Scan a GitHub repository (a bare owner/repo or URL works too)",
         ),
         ("rescan", "Re-scan the last repository, bypassing the cache"),
         ("list", "Show the skills of the last scan again"),
+        (
+            "filter [query|clear]",
+            "Filter listed skills by name, description, or path (or clear filter)",
+        ),
+        (
+            "similar [<number|name>]",
+            "Discover similar skills and duplicate definitions by percentage",
+        ),
         (
             "open <number|name>",
             "Open a skill from the last scan in your browser",
@@ -465,7 +709,7 @@ pub fn write_help<W: Write>(out: &mut W) -> io::Result<()> {
         ("exit, quit, q", "Exit Skill Atlas"),
     ];
     for (cmd, desc) in rows {
-        writeln!(out, "  {:<46} {}", cmd.cyan(), desc)?;
+        writeln!(out, "  {:<58} {}", cmd.cyan(), desc)?;
     }
     writeln!(out)
 }
