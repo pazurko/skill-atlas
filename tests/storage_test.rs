@@ -239,7 +239,7 @@ fn test_storage_star_and_unstar_skills() {
         "main",
         Some("commit_sha"),
         None,
-        &[skill.clone()],
+        std::slice::from_ref(&skill),
     )
     .unwrap();
 
