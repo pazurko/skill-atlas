@@ -72,9 +72,13 @@ jobs:
     - name: Generate Visual Step Summary
       if: always()
       run: |
-        echo "## 📸 Web UI Visual & Playwright Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "## 🎬 Web UI Demo Video & Visual Playwright Test Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Visual Screenshots Captured in CI" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎥 Automated End-to-End Demo Walkthrough" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "<p align=\"center\"><img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/webui-demo.gif\" width=\"800\" alt=\"Skill Atlas Web UI Demo Video\" /></p>" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📸 Visual Screenshots Captured in CI" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "| Scenario | Screenshot Preview |" >> $GITHUB_STEP_SUMMARY
         echo "|:---|:---|" >> $GITHUB_STEP_SUMMARY
@@ -85,7 +89,7 @@ jobs:
         echo "| **05 - Center Peek Modal** | <img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/05-center-peek-modal.png\" width=\"400\" /> |" >> $GITHUB_STEP_SUMMARY
         echo "| **06 - Multi-Repository Scan** | <img src=\"https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/screenshots/06-multi-repo-scan.png\" width=\"400\" /> |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "🎥 Recorded test videos and complete HTML report are downloadable in the workflow artifacts above." >> $GITHUB_STEP_SUMMARY
+        echo "🎥 Recorded test videos, animated GIFs, and complete HTML reports are downloadable in the workflow artifacts above." >> $GITHUB_STEP_SUMMARY
 
     - name: Upload Playwright Visual Artifacts (Videos, Screenshots & Reports)
       if: always()

@@ -9,6 +9,158 @@ if (!fs.existsSync(screenshotsDir)) {
 
 test.describe('Skill Atlas Web UI - Visual & Interaction Tests', () => {
 
+  test('00 - Complete Web UI Interactive User Flow Demo', async ({ page }) => {
+    // Mock single scan
+    await page.route('**/api/scan**', async (route) => {
+      const postData = route.request().postDataJSON() || {};
+      const target = postData.repo || (postData.targets ? postData.targets.join(', ') : '');
+
+      if (target.includes('swarm') || target.includes('openai')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            owner: 'Multiple',
+            repo: 'Repositories (2 repos)',
+            branch: 'main',
+            commit_sha: 'multi_sha',
+            from_cache: false,
+            truncated: false,
+            skills: [
+              {
+                name: 'swarm-orchestrator',
+                description: 'Multi-agent coordination framework.',
+                path: 'skills/orchestrator/SKILL.md',
+                url: 'https://github.com/openai/swarm/blob/main/skills/orchestrator/SKILL.md'
+              },
+              {
+                name: 'kotlin-compiler-test',
+                description: 'Compiler diagnostics test generator.',
+                path: 'skills/compiler-test/SKILL.md',
+                url: 'https://github.com/JetBrains/kotlin/blob/main/skills/compiler-test/SKILL.md'
+              }
+            ]
+          })
+        });
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            owner: 'JetBrains',
+            repo: 'kotlin',
+            branch: 'main',
+            commit_sha: 'a1b2c3d4e5f6',
+            from_cache: false,
+            truncated: false,
+            skills: [
+              {
+                name: 'analysis-api-create-cherry-pick-issue',
+                description: 'Create a KTIJ cherry-pick tracking issue for a KT fix.',
+                path: '.junie/skills/analysis-api-create-cherry-pick-issue/SKILL.md',
+                url: 'https://github.com/JetBrains/kotlin/blob/main/.junie/skills/analysis-api-create-cherry-pick-issue/SKILL.md'
+              },
+              {
+                name: 'build-bump-gradle-version',
+                description: 'Bumps the Gradle wrapper and distribution version for Kotlin build.',
+                path: 'skills/build-bump-gradle-version/SKILL.md',
+                url: 'https://github.com/JetBrains/kotlin/blob/main/skills/build-bump-gradle-version/SKILL.md'
+              },
+              {
+                name: 'build-bump-gradle-api',
+                description: 'Bumps the Gradle API version compiled against.',
+                path: 'skills/build-bump-gradle-api/skill.yaml',
+                url: 'https://github.com/JetBrains/kotlin/blob/main/skills/build-bump-gradle-api/skill.yaml'
+              }
+            ]
+          })
+        });
+      }
+    });
+
+    // Mock similar
+    await page.route('**/api/similar**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          repo: 'JetBrains/kotlin',
+          pairs: [
+            {
+              skill_a: {
+                name: 'build-bump-gradle-version',
+                description: 'Bumps the Gradle wrapper and distribution version for Kotlin build.',
+                path: 'skills/build-bump-gradle-version/SKILL.md',
+                url: 'https://github.com/JetBrains/kotlin/blob/main/skills/build-bump-gradle-version/SKILL.md'
+              },
+              index_a: 2,
+              skill_b: {
+                name: 'build-bump-gradle-api',
+                description: 'Bumps the Gradle API version compiled against.',
+                path: 'skills/build-bump-gradle-api/skill.yaml',
+                url: 'https://github.com/JetBrains/kotlin/blob/main/skills/build-bump-gradle-api/skill.yaml'
+              },
+              index_b: 3,
+              similarity: 88.0
+            }
+          ],
+          target_matches: [
+            {
+              skill: {
+                name: 'build-bump-gradle-api',
+                description: 'Bumps the Gradle API version compiled against.',
+                path: 'skills/build-bump-gradle-api/skill.yaml',
+                url: 'https://github.com/JetBrains/kotlin/blob/main/skills/build-bump-gradle-api/skill.yaml'
+              },
+              index: 3,
+              similarity: 88.0
+            }
+          ]
+        })
+      });
+    });
+
+    // Step 1: Landing Page
+    await page.goto('/');
+    await page.waitForTimeout(600);
+
+    // Step 2: Theme Switcher
+    const themeBtn = page.locator('#theme-toggle');
+    await themeBtn.click();
+    await page.waitForTimeout(600);
+    await themeBtn.click();
+    await page.waitForTimeout(600);
+
+    // Step 3: Single Repository Scan
+    await page.fill('#target', 'JetBrains/kotlin');
+    await page.waitForTimeout(300);
+    await page.click('#scan-btn');
+    await expect(page.locator('#rows tr')).toHaveCount(3);
+    await page.waitForTimeout(700);
+
+    // Step 4: Real-time search filter
+    await page.fill('#filter', 'gradle');
+    await page.waitForTimeout(600);
+    await expect(page.locator('#rows tr')).toHaveCount(2);
+    await page.fill('#filter', '');
+    await page.waitForTimeout(500);
+
+    // Step 5: Center Peek Modal Dialog
+    await page.click('#rows tr:nth-child(2)');
+    await page.waitForTimeout(500);
+    await expect(page.locator('#peek-modal')).toBeVisible();
+    await page.waitForTimeout(800);
+    await page.click('#modal-close-btn');
+    await page.waitForTimeout(400);
+
+    // Step 6: Multi-Repository Scan
+    await page.fill('#target', 'openai/swarm, JetBrains/kotlin');
+    await page.waitForTimeout(400);
+    await page.click('#scan-btn');
+    await expect(page.locator('#rows tr')).toHaveCount(2);
+    await page.waitForTimeout(800);
+  });
+
   test('01 - Landing Page Visual Appearance and Theme Switching', async ({ page }) => {
     await page.goto('/');
 
