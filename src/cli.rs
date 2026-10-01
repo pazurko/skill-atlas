@@ -1,17 +1,17 @@
 use crate::interactive::present_skills;
 use crate::repl::{
-    cache_message, run_repl, truncation_message, write_welcome, ReplSession, TerminalUi,
+    cache_message, run_repl, truncation_message, write_skill_list, write_welcome, ReplSession,
+    TerminalUi,
 };
 use crate::scanner::{scan_github_repo, ScannerOptions};
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "skill-atlas",
-    about = "Interactive CLI to scan GitHub repositories for AI agent skills",
+    about = "Skill Atlas - Discover AI agent skills across GitHub repositories",
     version
 )]
 pub struct Cli {
@@ -25,75 +25,31 @@ pub enum Commands {
     Scan {
         /// Target repository identifier or URL (e.g. owner/repo or https://github.com/owner/repo)
         githubrepo: Option<String>,
+    },
 
-        /// GitHub personal access token (optional, to avoid rate limits)
-        #[arg(short, long)]
-        token: Option<String>,
+    /// Filter cached skills by keyword query across name, description, or path
+    Filter {
+        /// Search query to filter skills by
+        query: Option<String>,
+    },
 
-        /// Git branch or ref to scan (default: HEAD)
-        #[arg(short, long)]
-        branch: Option<String>,
-
-        /// Output results as JSON instead of interactive menu
-        #[arg(long)]
-        json: bool,
-
-        /// Bypass local SQLite cache and re-scan the repository
-        #[arg(long, alias = "refresh")]
-        no_cache: bool,
-
-        /// Custom path to SQLite database for caching
-        #[arg(long)]
-        db_path: Option<PathBuf>,
-
-        /// Filter scanned skills by query across name, description, or path
-        #[arg(short, long)]
-        filter: Option<String>,
-
-        /// Highlight and report similar skills found in the repository
-        #[arg(long)]
-        similar: bool,
-
-        /// Minimum similarity percentage threshold for detection (default: 30.0)
-        #[arg(long)]
-        min_similarity: Option<f64>,
+    /// Discover similar skills based on heuristics and similarity percentages
+    Similar {
+        /// Target skill name or index to find similar counterparts for
+        target: Option<String>,
     },
 
     /// Start localhost web interface for scanning and viewing skills
     #[command(alias = "serve")]
     Web {
-        /// Host address to bind to (default: 127.0.0.1)
-        #[arg(short = 'H', long, default_value = "127.0.0.1")]
-        host: String,
-
         /// Port to listen on (default: 3000)
         #[arg(short, long, default_value_t = 3000)]
         port: u16,
-
-        /// Do not automatically open the web browser on startup
-        #[arg(long)]
-        no_open: bool,
-
-        /// Automatically open the web interface in the default browser
-        #[arg(long, conflicts_with = "no_open")]
-        open: bool,
-
-        /// GitHub personal access token (optional, to avoid rate limits)
-        #[arg(short, long)]
-        token: Option<String>,
-
-        /// Git branch or ref to scan by default (default: HEAD)
-        #[arg(short, long)]
-        branch: Option<String>,
-
-        /// Bypass local SQLite cache by default
-        #[arg(long, alias = "refresh")]
-        no_cache: bool,
-
-        /// Custom path to SQLite database for caching
-        #[arg(long)]
-        db_path: Option<PathBuf>,
     },
+
+    /// List all cached skills from the local SQLite database
+    #[command(alias = "ls")]
+    List,
 }
 
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
@@ -106,82 +62,222 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
-        Some(Commands::Web {
-            host,
-            port,
-            no_open,
-            open: _,
-            token,
-            branch,
-            no_cache,
-            db_path,
-        }) => {
-            let options = ScannerOptions {
-                token,
-                branch,
-                base_api_url: None,
-                base_raw_url: None,
-                no_cache,
-                db_path,
-            };
+        Some(Commands::Web { port }) => {
             let web_options = crate::web::WebOptions {
-                host,
+                host: "127.0.0.1".to_string(),
                 port,
-                open_browser: !no_open,
-                scanner_options: options,
+                open_browser: true,
+                scanner_options: ScannerOptions::default(),
             };
             crate::web::start_web_server(web_options).await
         }
         Some(Commands::Scan {
             githubrepo: Some(repo),
-            token,
-            branch,
-            json,
-            no_cache,
-            db_path,
-            filter,
-            similar,
-            min_similarity,
         }) if !repo.trim().is_empty() => {
-            if !json && is_tty() {
-                let options = scanner_options(token, branch, no_cache, db_path);
-                run_session(Some(repo.trim()), options, filter).await
+            if is_tty() {
+                run_session(Some(repo.trim()), ScannerOptions::default(), None).await
             } else {
-                let cli_opts = ScanCliOptions {
-                    token,
-                    branch,
-                    json,
-                    no_cache,
-                    db_path,
-                    filter,
-                    similar,
-                    min_similarity,
-                };
-                scan_and_present(&repo, cli_opts).await
+                scan_and_present(&repo).await
             }
         }
-        Some(Commands::Scan {
-            githubrepo: _,
-            token,
-            branch,
-            json: _,
-            no_cache,
-            db_path,
-            filter,
-            similar: _,
-            min_similarity: _,
-        }) => {
+        Some(Commands::Scan { githubrepo: _ }) => {
             if is_tty() {
-                run_session(
-                    None,
-                    scanner_options(token, branch, no_cache, db_path),
-                    filter,
-                )
-                .await
+                run_session(None, ScannerOptions::default(), None).await
             } else {
                 print_usage();
                 Ok(())
             }
+        }
+        Some(Commands::List) => {
+            let conn = crate::storage::open_db(None)?;
+            let skills = crate::storage::get_all_cached_skills(&conn)?;
+
+            if skills.is_empty() {
+                println!(
+                    "{}",
+                    "No skills found in SQLite database yet. Run 'skill-atlas scan <githubrepo>' to scan a repository."
+                        .yellow()
+                );
+                return Ok(());
+            }
+
+            let title = format!("SQLite Database ({} cached skills)", skills.len());
+            if is_tty() {
+                present_skills(
+                    &skills,
+                    Some(&title),
+                    false,
+                    &mut crate::history::OpenHistory::new(),
+                )?;
+            } else {
+                write_skill_list(&mut io::stdout(), &skills, &title)?;
+            }
+            Ok(())
+        }
+        Some(Commands::Filter { query }) => {
+            let conn = crate::storage::open_db(None)?;
+            let skills = crate::storage::get_all_cached_skills(&conn)?;
+
+            if skills.is_empty() {
+                println!(
+                    "{}",
+                    "No skills found in SQLite database yet. Run 'skill-atlas scan <githubrepo>' to scan a repository."
+                        .yellow()
+                );
+                return Ok(());
+            }
+
+            let displayed = match query.as_deref() {
+                Some(q) if !q.trim().is_empty() => {
+                    let filtered = crate::similarity::filter_skills(&skills, q.trim());
+                    if filtered.is_empty() {
+                        println!(
+                            "{}",
+                            format!(
+                                "No skills matched filter '{}' (0 of {} skills).",
+                                q.trim(),
+                                skills.len()
+                            )
+                            .yellow()
+                        );
+                        return Ok(());
+                    }
+                    filtered
+                }
+                _ => skills.clone(),
+            };
+
+            let title = if query.is_some() {
+                format!(
+                    "SQLite Database (filtered: {} of {})",
+                    displayed.len(),
+                    skills.len()
+                )
+            } else {
+                format!("SQLite Database ({} cached skills)", displayed.len())
+            };
+
+            if is_tty() {
+                present_skills(
+                    &displayed,
+                    Some(&title),
+                    false,
+                    &mut crate::history::OpenHistory::new(),
+                )?;
+            } else {
+                write_skill_list(&mut io::stdout(), &displayed, &title)?;
+            }
+            Ok(())
+        }
+        Some(Commands::Similar { target }) => {
+            let conn = crate::storage::open_db(None)?;
+            let skills = crate::storage::get_all_cached_skills(&conn)?;
+
+            if skills.is_empty() {
+                println!(
+                    "{}",
+                    "No skills found in SQLite database yet. Run 'skill-atlas scan <githubrepo>' to scan a repository."
+                        .yellow()
+                );
+                return Ok(());
+            }
+
+            let threshold = crate::similarity::DEFAULT_SIMILARITY_THRESHOLD;
+            match target.as_deref() {
+                Some(t) if !t.trim().is_empty() => {
+                    let t_clean = t.trim();
+                    let target_skill = if let Ok(idx) = t_clean.parse::<usize>() {
+                        if (1..=skills.len()).contains(&idx) {
+                            Some(&skills[idx - 1])
+                        } else {
+                            None
+                        }
+                    } else {
+                        skills
+                            .iter()
+                            .find(|s| s.name.eq_ignore_ascii_case(t_clean))
+                            .or_else(|| {
+                                skills.iter().find(|s| {
+                                    s.name.to_lowercase().contains(&t_clean.to_lowercase())
+                                })
+                            })
+                    };
+
+                    let Some(skill) = target_skill else {
+                        println!(
+                            "{}",
+                            format!("Skill matching '{}' not found in database.", t_clean).yellow()
+                        );
+                        return Ok(());
+                    };
+
+                    let matches = crate::similarity::find_similar_skills(skill, &skills, threshold);
+                    if matches.is_empty() {
+                        println!(
+                            "{}",
+                            format!(
+                                "No skills similar to '{}' detected above {:.0}% threshold.",
+                                skill.name, threshold
+                            )
+                            .yellow()
+                        );
+                    } else {
+                        println!(
+                            "\n{}",
+                            format!(
+                                "Skills similar to '{}' (threshold: >= {:.0}%):",
+                                skill.name, threshold
+                            )
+                            .bold()
+                        );
+                        for m in &matches {
+                            println!(
+                                " [{}] › {} ({:.0}% similar)\n     {}\n     {}",
+                                m.index,
+                                m.skill.name.bold().cyan(),
+                                m.similarity,
+                                m.skill.description,
+                                format!("📁 {}", m.skill.path).dimmed()
+                            );
+                        }
+                        println!();
+                    }
+                }
+                _ => {
+                    let pairs = crate::similarity::find_all_similar_pairs(&skills, threshold);
+                    if pairs.is_empty() {
+                        println!(
+                            "{}",
+                            format!(
+                                "No similar skills detected above {:.0}% threshold.",
+                                threshold
+                            )
+                            .yellow()
+                        );
+                    } else {
+                        println!(
+                            "\n{}",
+                            format!(
+                                "Similar skills detected across database (threshold: >= {:.0}%):",
+                                threshold
+                            )
+                            .bold()
+                        );
+                        for p in &pairs {
+                            println!(
+                                " • [{}] {} <-> [{}] {} ({:.0}% similar)",
+                                p.index_a,
+                                p.skill_a.name.cyan(),
+                                p.index_b,
+                                p.skill_b.name.cyan(),
+                                p.similarity
+                            );
+                        }
+                        println!();
+                    }
+                }
+            }
+            Ok(())
         }
         None => {
             if is_tty() {
@@ -201,25 +297,9 @@ fn is_tty() -> bool {
 fn print_usage() {
     eprintln!(
         "{}",
-        "Usage: skill-atlas scan <githubrepo>\nRun `skill-atlas --help` for more information."
+        "Skill Atlas - Core commands:\n  skill-atlas scan <githubrepo>\n  skill-atlas list\n  skill-atlas filter <query>\n  skill-atlas similar [target]\n  skill-atlas web\n\nRun `skill-atlas --help` for full details."
             .yellow()
     );
-}
-
-fn scanner_options(
-    token: Option<String>,
-    branch: Option<String>,
-    no_cache: bool,
-    db_path: Option<PathBuf>,
-) -> ScannerOptions {
-    ScannerOptions {
-        token,
-        branch,
-        base_api_url: None,
-        base_raw_url: None,
-        no_cache,
-        db_path,
-    }
 }
 
 /// Runs the persistent `skill-atlas>` prompt session, optionally scanning a repository first.
@@ -245,54 +325,20 @@ async fn run_session(
     Ok(())
 }
 
-#[derive(Debug, Clone, Default)]
-struct ScanCliOptions {
-    token: Option<String>,
-    branch: Option<String>,
-    json: bool,
-    no_cache: bool,
-    db_path: Option<PathBuf>,
-    filter: Option<String>,
-    similar: bool,
-    min_similarity: Option<f64>,
-}
+async fn scan_and_present(githubrepo: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "{}",
+        format!(
+            "\n🔍 Scanning repository {} for agent skills...",
+            githubrepo.bold()
+        )
+        .cyan()
+    );
 
-async fn scan_and_present(
-    githubrepo: &str,
-    opts: ScanCliOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if !opts.json {
-        println!(
-            "{}",
-            format!(
-                "\n🔍 Scanning repository {} for agent skills...",
-                githubrepo.bold()
-            )
-            .cyan()
-        );
-    }
-
-    let options = ScannerOptions {
-        token: opts.token,
-        branch: opts.branch,
-        base_api_url: None,
-        base_raw_url: None,
-        no_cache: opts.no_cache,
-        db_path: opts.db_path,
-    };
+    let options = ScannerOptions::default();
 
     match scan_github_repo(githubrepo, &options).await {
-        Ok(mut result) => {
-            if let Some(f) = &opts.filter {
-                result.skills = crate::similarity::filter_skills(&result.skills, f);
-            }
-
-            if opts.json {
-                let json_str = serde_json::to_string_pretty(&result)?;
-                println!("{}", json_str);
-                return Ok(());
-            }
-
+        Ok(result) => {
             if let Some(msg) = cache_message(&result) {
                 println!("{}", msg.green());
             }
@@ -312,37 +358,7 @@ async fn scan_and_present(
                 return Ok(());
             }
 
-            let threshold = opts
-                .min_similarity
-                .unwrap_or(crate::similarity::DEFAULT_SIMILARITY_THRESHOLD);
-            if opts.similar {
-                let pairs = crate::similarity::find_all_similar_pairs(&result.skills, threshold);
-                if !pairs.is_empty() {
-                    println!(
-                        "\n{}",
-                        format!("Similar skills detected (threshold: >= {:.0}%):", threshold)
-                            .bold()
-                    );
-                    for p in &pairs {
-                        println!(
-                            " • [{}] {} <-> [{}] {} ({:.0}% similar)",
-                            p.index_a,
-                            p.skill_a.name.cyan(),
-                            p.index_b,
-                            p.skill_b.name.cyan(),
-                            p.similarity
-                        );
-                    }
-                    println!();
-                }
-            }
-
-            let repo_name = if let Some(f) = &opts.filter {
-                format!("{}/{} (filtered by '{}')", result.owner, result.repo, f)
-            } else {
-                format!("{}/{}", result.owner, result.repo)
-            };
-
+            let repo_name = format!("{}/{}", result.owner, result.repo);
             present_skills(
                 &result.skills,
                 Some(&repo_name),

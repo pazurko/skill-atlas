@@ -222,6 +222,31 @@ pub fn list_all_cached_repositories(conn: &Connection) -> Result<Vec<CachedRepo>
     Ok(repos)
 }
 
+/// Retrieves all cached skills across all repositories stored in the database.
+pub fn get_all_cached_skills(conn: &Connection) -> Result<Vec<Skill>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.name, s.description, s.path, s.url 
+         FROM skills s 
+         JOIN repositories r ON s.repository_id = r.id 
+         ORDER BY LOWER(r.owner) ASC, LOWER(r.repo) ASC, LOWER(s.name) ASC",
+    )?;
+
+    let skill_iter = stmt.query_map([], |row| {
+        Ok(Skill {
+            name: row.get(0)?,
+            description: row.get(1)?,
+            path: row.get(2)?,
+            url: row.get(3)?,
+        })
+    })?;
+
+    let mut skills = Vec::new();
+    for skill in skill_iter {
+        skills.push(skill?);
+    }
+    Ok(skills)
+}
+
 /// Clears all cached repository and skill data.
 pub fn clear_cache(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM skills", [])?;
