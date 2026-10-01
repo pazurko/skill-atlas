@@ -7,17 +7,131 @@ pub const DEFAULT_SIMILARITY_THRESHOLD: f64 = 30.0;
 
 /// Stop words excluded from description tokenization to emphasize meaningful keywords.
 const STOP_WORDS: &[&str] = &[
-    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
-    "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but",
-    "by", "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for",
-    "from", "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself",
-    "him", "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "just",
-    "me", "more", "most", "my", "myself", "no", "nor", "not", "now", "of", "off", "on", "once",
-    "only", "or", "other", "our", "ours", "ourselves", "out", "over", "own", "same", "she",
-    "should", "so", "some", "such", "than", "that", "the", "their", "theirs", "them", "themselves",
-    "then", "there", "these", "they", "this", "those", "through", "to", "too", "under", "until",
-    "up", "very", "was", "we", "were", "what", "when", "where", "which", "while", "who", "whom",
-    "why", "with", "would", "you", "your", "yours", "yourself", "yourselves",
+    "a",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "all",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "below",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "doing",
+    "down",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "further",
+    "had",
+    "has",
+    "have",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "herself",
+    "him",
+    "himself",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "itself",
+    "just",
+    "me",
+    "more",
+    "most",
+    "my",
+    "myself",
+    "no",
+    "nor",
+    "not",
+    "now",
+    "of",
+    "off",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "our",
+    "ours",
+    "ourselves",
+    "out",
+    "over",
+    "own",
+    "same",
+    "she",
+    "should",
+    "so",
+    "some",
+    "such",
+    "than",
+    "that",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "themselves",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "very",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "why",
+    "with",
+    "would",
+    "you",
+    "your",
+    "yours",
+    "yourself",
+    "yourselves",
 ];
 
 /// Pair of similar skills with a calculated similarity percentage.
@@ -64,8 +178,16 @@ pub fn jaccard_similarity(set_a: &HashSet<String>, set_b: &HashSet<String>) -> f
 
 /// Computes character bigram Dice coefficient for fuzzy string similarity (0.0 to 1.0).
 pub fn dice_bigram_similarity(s1: &str, s2: &str) -> f64 {
-    let s1_clean: String = s1.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
-    let s2_clean: String = s2.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
+    let s1_clean: String = s1
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    let s2_clean: String = s2
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
 
     if s1_clean == s2_clean {
         return if s1_clean.is_empty() { 0.0 } else { 1.0 };
@@ -175,7 +297,12 @@ pub fn find_similar_skills(target: &Skill, all: &[Skill], min_pct: f64) -> Vec<S
         b.similarity
             .partial_cmp(&a.similarity)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.skill.name.to_lowercase().cmp(&b.skill.name.to_lowercase()))
+            .then_with(|| {
+                a.skill
+                    .name
+                    .to_lowercase()
+                    .cmp(&b.skill.name.to_lowercase())
+            })
     });
     matches
 }

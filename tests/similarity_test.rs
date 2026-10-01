@@ -61,7 +61,8 @@ fn test_calculate_similarity_identical_and_duplicates() {
         name: "code-review".to_string(),
         description: "Automated code review and quality checks.".to_string(),
         path: ".claude/skills/code-review/SKILL.md".to_string(),
-        url: "https://github.com/org/repo/blob/main/.claude/skills/code-review/SKILL.md".to_string(),
+        url: "https://github.com/org/repo/blob/main/.claude/skills/code-review/SKILL.md"
+            .to_string(),
     };
 
     let skill_b = Skill {

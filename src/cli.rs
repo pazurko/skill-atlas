@@ -172,7 +172,12 @@ pub async fn execute_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             min_similarity: _,
         }) => {
             if is_tty() {
-                run_session(None, scanner_options(token, branch, no_cache, db_path), filter).await
+                run_session(
+                    None,
+                    scanner_options(token, branch, no_cache, db_path),
+                    filter,
+                )
+                .await
             } else {
                 print_usage();
                 Ok(())
@@ -229,7 +234,9 @@ async fn run_session(
 
     write_welcome(&mut out)?;
     if let Some(repo) = initial_repo {
-        session.scan(&mut out, &mut ui, repo, None, false, filter).await?;
+        session
+            .scan(&mut out, &mut ui, repo, None, false, filter)
+            .await?;
     }
     out.flush()?;
 
@@ -313,11 +320,8 @@ async fn scan_and_present(
                 if !pairs.is_empty() {
                     println!(
                         "\n{}",
-                        format!(
-                            "Similar skills detected (threshold: >= {:.0}%):",
-                            threshold
-                        )
-                        .bold()
+                        format!("Similar skills detected (threshold: >= {:.0}%):", threshold)
+                            .bold()
                     );
                     for p in &pairs {
                         println!(

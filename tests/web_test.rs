@@ -326,26 +326,37 @@ async fn test_web_api_scan_with_filter_and_similar() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/acme/skills-hub/sha_web_sim/skills/review-a/SKILL.md"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "---\nname: code-review\ndescription: Automated code review.\n---\n",
+        .and(path(
+            "/acme/skills-hub/sha_web_sim/skills/review-a/SKILL.md",
         ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(
+                "---\nname: code-review\ndescription: Automated code review.\n---\n",
+            ),
+        )
         .mount(&mock_server)
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/acme/skills-hub/sha_web_sim/skills/deploy/skill.yaml"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "name: deploy-prod\ndescription: Production deployment.\n",
+        .and(path(
+            "/acme/skills-hub/sha_web_sim/skills/deploy/skill.yaml",
         ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("name: deploy-prod\ndescription: Production deployment.\n"),
+        )
         .mount(&mock_server)
         .await;
 
     Mock::given(method("GET"))
-        .and(path("/acme/skills-hub/sha_web_sim/skills/review-b/SKILL.md"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "---\nname: code-review\ndescription: Automated code review.\n---\n",
+        .and(path(
+            "/acme/skills-hub/sha_web_sim/skills/review-b/SKILL.md",
         ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(
+                "---\nname: code-review\ndescription: Automated code review.\n---\n",
+            ),
+        )
         .mount(&mock_server)
         .await;
 

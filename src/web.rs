@@ -246,10 +246,13 @@ async fn execute_similar(
         (status, err.to_string())
     })?;
 
-    let threshold = payload.min_similarity.unwrap_or(DEFAULT_SIMILARITY_THRESHOLD);
+    let threshold = payload
+        .min_similarity
+        .unwrap_or(DEFAULT_SIMILARITY_THRESHOLD);
     let pairs = find_all_similar_pairs(&scan_result.skills, threshold);
 
-    let target_matches = if let Some(target_query) = payload.target.filter(|t| !t.trim().is_empty()) {
+    let target_matches = if let Some(target_query) = payload.target.filter(|t| !t.trim().is_empty())
+    {
         let lower = target_query.trim().to_lowercase();
         let target_skill = scan_result
             .skills
