@@ -413,6 +413,19 @@ impl ReplSession {
             },
             ReplCommand::List => {
                 if self.skills.is_empty() {
+                    // Try to load from SQLite database
+                    if let Ok(conn) = crate::storage::open_db(self.options.db_path.as_deref()) {
+                        if let Ok(db_skills) = crate::storage::get_all_cached_skills(&conn) {
+                            if !db_skills.is_empty() {
+                                self.skills = db_skills;
+                                self.repo_name =
+                                    Some("SQLite Database (All Cached Skills)".to_string());
+                            }
+                        }
+                    }
+                }
+
+                if self.skills.is_empty() {
                     writeln!(
                         out,
                         "{}",
@@ -439,6 +452,19 @@ impl ReplSession {
                 }
             }
             ReplCommand::Filter(query) => {
+                if self.skills.is_empty() {
+                    // Try to load from SQLite database
+                    if let Ok(conn) = crate::storage::open_db(self.options.db_path.as_deref()) {
+                        if let Ok(db_skills) = crate::storage::get_all_cached_skills(&conn) {
+                            if !db_skills.is_empty() {
+                                self.skills = db_skills;
+                                self.repo_name =
+                                    Some("SQLite Database (All Cached Skills)".to_string());
+                            }
+                        }
+                    }
+                }
+
                 if self.skills.is_empty() {
                     writeln!(
                         out,
@@ -490,6 +516,19 @@ impl ReplSession {
                 }
             }
             ReplCommand::Similar(query) => {
+                if self.skills.is_empty() {
+                    // Try to load from SQLite database
+                    if let Ok(conn) = crate::storage::open_db(self.options.db_path.as_deref()) {
+                        if let Ok(db_skills) = crate::storage::get_all_cached_skills(&conn) {
+                            if !db_skills.is_empty() {
+                                self.skills = db_skills;
+                                self.repo_name =
+                                    Some("SQLite Database (All Cached Skills)".to_string());
+                            }
+                        }
+                    }
+                }
+
                 if self.skills.is_empty() {
                     writeln!(
                         out,
@@ -679,37 +718,36 @@ pub fn write_help<W: Write>(out: &mut W) -> io::Result<()> {
     writeln!(out, "\n{}", "Available commands:".bold())?;
     let rows = [
         (
-            "scan <githubrepo> [-b <BRANCH>] [--refresh] [-f <QUERY>]",
-            "Scan a GitHub repository (a bare owner/repo or URL works too)",
+            "scan <githubrepo>",
+            "Scan a GitHub repository for AI agent skills",
         ),
-        ("rescan", "Re-scan the last repository, bypassing the cache"),
-        ("list", "Show the skills of the last scan again"),
+        (
+            "list",
+            "Show all cached skills or skills of the current scan",
+        ),
         (
             "filter [query|clear]",
-            "Filter listed skills by name, description, or path (or clear filter)",
+            "Filter listed skills by name, description, or path",
         ),
         (
             "similar [<number|name>]",
             "Discover similar skills and duplicate definitions by percentage",
         ),
         (
-            "open <number|name>",
-            "Open a skill from the last scan in your browser",
-        ),
-        (
-            "history",
-            "Show every skill opened in this session (audit trail)",
-        ),
-        (
-            "web [--port <PORT>] [--no-open]",
+            "web [--port <PORT>]",
             "Start localhost web interface to scan and view skills",
         ),
-        ("help", "Show this help"),
+        (
+            "open <number|name>",
+            "Open a skill definition on GitHub in your default browser",
+        ),
+        ("history", "Show skills opened in this session (audit log)"),
+        ("help", "Show this help message"),
         ("clear", "Clear the terminal screen"),
         ("exit, quit, q", "Exit Skill Atlas"),
     ];
     for (cmd, desc) in rows {
-        writeln!(out, "  {:<58} {}", cmd.cyan(), desc)?;
+        writeln!(out, "  {:<30} {}", cmd.cyan(), desc)?;
     }
     writeln!(out)
 }

@@ -1,8 +1,8 @@
 use rusqlite::Connection;
 use skill_atlas::scanner::Skill;
 use skill_atlas::storage::{
-    clear_cache, get_cached_repository, init_db, list_all_cached_repositories,
-    save_cached_repository,
+    clear_cache, get_all_cached_skills, get_cached_repository, init_db,
+    list_all_cached_repositories, save_cached_repository,
 };
 
 #[test]
@@ -15,6 +15,9 @@ fn test_storage_init_and_empty() {
 
     let list = list_all_cached_repositories(&conn).unwrap();
     assert!(list.is_empty());
+
+    let all_skills = get_all_cached_skills(&conn).unwrap();
+    assert!(all_skills.is_empty());
 }
 
 #[test]
@@ -143,4 +146,50 @@ fn test_storage_clear_cache() {
     assert!(get_cached_repository(&conn, "a", "b", "main")
         .unwrap()
         .is_none());
+}
+
+#[test]
+fn test_storage_get_all_cached_skills_multiple_repos() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    init_db(&conn).unwrap();
+
+    let repo1_skills = vec![Skill {
+        name: "b-skill".to_string(),
+        description: "B Skill".to_string(),
+        path: "skills/b/SKILL.md".to_string(),
+        url: "https://github.com/org/repo1/blob/main/skills/b/SKILL.md".to_string(),
+    }];
+
+    let repo2_skills = vec![Skill {
+        name: "a-skill".to_string(),
+        description: "A Skill".to_string(),
+        path: "skills/a/SKILL.md".to_string(),
+        url: "https://github.com/org/repo2/blob/main/skills/a/SKILL.md".to_string(),
+    }];
+
+    save_cached_repository(
+        &mut conn,
+        "org",
+        "repo1",
+        "main",
+        Some("sha1"),
+        None,
+        &repo1_skills,
+    )
+    .unwrap();
+    save_cached_repository(
+        &mut conn,
+        "org",
+        "repo2",
+        "main",
+        Some("sha2"),
+        None,
+        &repo2_skills,
+    )
+    .unwrap();
+
+    let all_skills = get_all_cached_skills(&conn).unwrap();
+    assert_eq!(all_skills.len(), 2);
+    assert_eq!(all_skills[0].name, "b-skill");
+    assert_eq!(all_skills[1].name, "a-skill");
 }

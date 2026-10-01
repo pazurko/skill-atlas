@@ -110,11 +110,15 @@ async fn mount_repo(
     }
 }
 
-fn options_for(server: &MockServer, db_name: &str) -> (ScannerOptions, std::path::PathBuf) {
-    let nanos = std::time::SystemTime::now()
+fn rand_nanos() -> u128 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_nanos();
+        .as_nanos()
+}
+
+fn options_for(server: &MockServer, db_name: &str) -> (ScannerOptions, std::path::PathBuf) {
+    let nanos = rand_nanos();
     let db_path = std::env::temp_dir().join(format!("repl_{}_{}.db", db_name, nanos));
     (
         ScannerOptions {
@@ -461,7 +465,12 @@ async fn test_session_open_edge_cases() {
 
 #[tokio::test]
 async fn test_session_help_clear_unknown_and_nothing_to_rescan() {
-    let mut session = ReplSession::new(ScannerOptions::default());
+    let temp_db = std::env::temp_dir().join(format!("test_repl_empty_{}.db", rand_nanos()));
+    let options = ScannerOptions {
+        db_path: Some(temp_db.clone()),
+        ..Default::default()
+    };
+    let mut session = ReplSession::new(options);
     let mut ui = RecordingUi::default();
     let out = run_script(
         &mut session,
@@ -477,6 +486,44 @@ async fn test_session_help_clear_unknown_and_nothing_to_rescan() {
     assert!(out.contains("Nothing to rescan yet"));
     assert!(out.contains("No skills listed yet"));
     assert!(out.contains("Goodbye!"));
+    let _ = std::fs::remove_file(temp_db);
+}
+
+#[tokio::test]
+async fn test_session_list_loads_from_sqlite_database() {
+    let temp_db = std::env::temp_dir().join(format!("test_repl_db_list_{}.db", rand_nanos()));
+    let mut conn = skill_atlas::storage::open_db(Some(&temp_db)).unwrap();
+    let skills = vec![Skill {
+        name: "cached-skill".to_string(),
+        description: "From database".to_string(),
+        path: "skills/test/SKILL.md".to_string(),
+        url: "https://github.com/test/repo/blob/main/skills/test/SKILL.md".to_string(),
+    }];
+    skill_atlas::storage::save_cached_repository(
+        &mut conn,
+        "test",
+        "repo",
+        "main",
+        Some("sha_db"),
+        None,
+        &skills,
+    )
+    .unwrap();
+
+    let options = ScannerOptions {
+        db_path: Some(temp_db.clone()),
+        ..Default::default()
+    };
+    let mut session = ReplSession::new(options);
+    let mut ui = RecordingUi::default();
+    let out = run_script(&mut session, &mut ui, "list\nexit\n").await;
+
+    assert_eq!(ui.shown.len(), 1);
+    assert_eq!(session.skills.len(), 1);
+    assert_eq!(session.skills[0].name, "cached-skill");
+    assert!(out.contains("cached-skill"));
+
+    let _ = std::fs::remove_file(temp_db);
 }
 
 #[tokio::test]

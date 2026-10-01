@@ -53,78 +53,55 @@ cargo install --path .
 
 ## 🛠️ Usage
 
-### Scan a Repository
+### Core Commands
 
 ```bash
-# Scan target repository directly
+# Scan a GitHub repository
 skill-atlas scan <githubrepo>
 
-# Or launch the interactive session
+# List all cached skills from local SQLite database
+skill-atlas list
+
+# Filter cached skills by keyword query
+skill-atlas filter <query>
+
+# Discover similar skills and duplicate definitions
+skill-atlas similar [target]
+
+# Launch localhost web interface
+skill-atlas web
+
+# Interactive session (prompt when launched without arguments)
 skill-atlas
 ```
 
-### Launch Web Interface
-
-```bash
-# Start localhost web interface and open in browser
-skill-atlas web
-
-# Customize host and port
-skill-atlas web --host 127.0.0.1 --port 8080 --no-open
-```
-
-In a terminal, both forms end in a persistent `skill-atlas>` prompt (with `--json` or non-TTY output, `scan` stays one-shot):
+In a terminal, running `skill-atlas` or `skill-atlas scan <repo>` starts the persistent `skill-atlas>` prompt:
 
 ```text
 ⚡ Welcome to Skill Atlas!
 Type 'scan <githubrepo>' (e.g. scan https://github.com/JetBrains/kotlin), 'help' for commands, or 'exit' to quit.
 
 skill-atlas> scan JetBrains/kotlin          # opens the arrow-key menu; q returns here
-skill-atlas> open 3                         # open skill #3 of the last scan (or: open gradle)
-skill-atlas> list                           # show the last results again
-skill-atlas> https://github.com/owner/repo  # a bare repo also scans
-skill-atlas> rescan                         # re-scan the last repo, bypassing the cache
+skill-atlas> open 3                         # open skill #3 of the last scan
+skill-atlas> list                           # show all cached skills from database
+skill-atlas> filter gradle                  # filter skills by keyword
+skill-atlas> similar                        # discover similar skills and duplicate pairs
+skill-atlas> web                            # start web interface
 skill-atlas> exit
 ```
 
 | Command | Action |
 | --- | --- |
-| `scan <githubrepo> [-b <BRANCH>] [--refresh] [-f <QUERY>]` | Scan a repository (a bare `owner/repo` or URL works too) |
-| `rescan` / `refresh` | Re-scan the last repository, bypassing the cache |
-| `list` / `ls` | Show the skills of the last scan again (respecting active filter) |
-| `filter [query\|clear]` / `f` | Filter current scan results by name, description, or path (or clear filter) |
+| `scan <githubrepo>` | Scan a GitHub repository (a bare `owner/repo` or URL works too) |
+| `list` / `ls` | Show all cached skills from SQLite database or current scan |
+| `filter [query\|clear]` / `f` | Filter skills by name, description, or path |
 | `similar [<number\|name>]` | Discover similar skills and duplicate definitions by percentage |
-| `open <number\|name>` | Open a skill from the last scan in the browser |
-| `history` / `opened` | Show every skill opened in this session (time, repo, name, URL) |
+| `open <number\|name>` | Open a skill definition on GitHub in default browser |
+| `web` / `serve` | Start localhost web interface to scan and view skills |
+| `history` | Show skills opened in this session (audit log) |
 | `help` / `?` | Show available commands |
 | `clear` | Clear the screen |
 | `exit` / `quit` / `q` / `Ctrl+D` | Exit Skill Atlas |
-
-#### Examples
-
-```bash
-# Using owner/repo shorthand
-skill-atlas scan openai/swarm
-
-# Using full GitHub URL
-skill-atlas scan https://github.com/JetBrains/kotlin
-
-# Output JSON
-skill-atlas scan owner/repo --json
-
-# Using GitHub token (to avoid rate limits)
-skill-atlas scan owner/repo --token your_github_token
-# ...or put GITHUB_TOKEN=... into a .env file in the current directory (loaded automatically)
-
-# Bypass SQLite cache and force re-scan
-skill-atlas scan owner/repo --no-cache
-
-# Custom SQLite database location
-skill-atlas scan owner/repo --db-path ./my-cache.db
-
-# Specifying a branch
-skill-atlas scan owner/repo --branch main
-```
 
 #### Visual Output Example
 

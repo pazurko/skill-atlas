@@ -6,36 +6,37 @@ Skill Atlas is an interactive CLI designed to maximize developer efficiency and 
 ## Core Command & Usage
 
 ```bash
-# Direct scanning via subcommand
-skill-atlas scan <githubrepo> [OPTIONS]
+# Scan a repository for AI agent skills
+skill-atlas scan <githubrepo>
+
+# List all cached skills from local SQLite database
+skill-atlas list
+
+# Filter cached skills by keyword query
+skill-atlas filter <query>
+
+# Discover similar skills and duplicate definitions
+skill-atlas similar [target]
 
 # Start localhost web interface
-skill-atlas web [OPTIONS]
+skill-atlas web
 
 # Interactive session (persistent `skill-atlas>` prompt when launched without arguments)
 skill-atlas
 ```
 
-### Arguments & Options
-- `<githubrepo>`: Target repository identifier or URL (e.g., `owner/repo`, `https://github.com/owner/repo`, or `git@github.com:...`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed to stderr.
-- `-t, --token <TOKEN>`: GitHub personal access token to prevent API rate limiting. If omitted, `GITHUB_TOKEN` (then `GH_TOKEN`) from the environment is used. At startup, `KEY=VALUE` lines from a `.env` file in the current directory, and then from the nearest `.env` in the executable's directory or its ancestors (e.g. the project root for `target/release/skill-atlas`, so a binary started from Finder or another directory still finds it), are loaded into the environment (blank lines and `#` comments skipped, `export ` prefix and quotes stripped); variables already set in the environment are never overridden, and a missing `.env` is ignored. Without a token GitHub allows only 60 API requests per hour per IP.
-- `-b, --branch <BRANCH>`: Target Git branch or ref (default: `HEAD`).
-- `-f, --filter <QUERY>`: Filter scanned skills by keyword query matching in name, description, or file path.
-- `--similar`: Highlight and report similar skills and duplicate definitions detected across the repository.
-- `--min-similarity <PERCENT>`: Minimum percentage similarity threshold for detection (default: `30.0`).
-- `--json`: Output raw JSON scan results instead of interactive menu.
-- `--no-cache` (alias: `--refresh`): Bypass local SQLite cache and re-scan GitHub directly.
-- `--db-path <PATH>`: Custom SQLite database path (default: `~/.skill-atlas/skills.db`).
+### Core Commands & Arguments
+- `scan <githubrepo>`: Target repository identifier or URL (e.g., `owner/repo`, `https://github.com/owner/repo`, or `git@github.com:...`). If omitted in an interactive terminal, the interactive session is started. If omitted in a non-interactive environment, a usage message is printed.
+- `list` (alias `ls`): Load and display all cached skills across all repositories stored in the local SQLite database (`~/.skill-atlas/skills.db`).
+- `filter [query]` (alias `f`): Filter skills by keyword query across name, description, or file path.
+- `similar [target]`: Find similar skills based on heuristics and similarity percentages (threshold >= 30.0%). Without arguments, lists all detected similar pairs. With a target skill, lists all skills similar to that target.
+- `web` (alias `serve`): Start the localhost web interface on port 3000 (`-p, --port <PORT>`).
+- Environment variables (`GITHUB_TOKEN`, `GH_TOKEN`) are automatically loaded from `.env` files to prevent API rate limiting.
 
-### Web Interface Options (`skill-atlas web` / `skill-atlas serve`)
-- `-H, --host <HOST>`: Host address to bind the web server (default: `127.0.0.1`).
-- `-p, --port <PORT>`: Port number to listen on (default: `3000`).
-- `--no-open`: Do not automatically open the web browser on startup.
-- `--open`: Explicitly open the browser on startup (default behavior).
-- `-t, --token <TOKEN>`: Default GitHub personal access token for web scans.
-- `-b, --branch <BRANCH>`: Default branch or ref (default: `HEAD`).
-- `--no-cache` (alias: `--refresh`): Bypass local SQLite cache by default.
-- `--db-path <PATH>`: Custom SQLite database path.
+### Web Interface & UI
+- Accessible via `skill-atlas web` or `web` inside the interactive prompt.
+- Modern minimalist layout with dark & light theme switcher and cat motifs (`Skill Cat 🐾`).
+- Fast SQLite cache loader modal, instant search filter, format filter chips (`All`, `SKILL.md`, `YAML`, `JSON`), and similar pairs exploration panel.
 
 ## Output Example & Visual Presentation
 
